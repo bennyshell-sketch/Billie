@@ -34,6 +34,16 @@
     calendarConnection: $("calendar-connection"),
     calendarActions: $("calendar-actions"),
     calendarEvents: $("calendar-events"),
+    talk: $("talk"),
+    speak: $("speak"),
+    speakToggle: $("speak-toggle"),
+    voiceStatus: $("voice-status"),
+    voiceActions: $("voice-actions"),
+    cloneBox: $("clone-box"),
+    cloneSamples: $("clone-samples"),
+    cloneName: $("clone-name"),
+    cloneAttest: $("clone-attest"),
+    cloneSubmit: $("clone-submit"),
   };
 
   // A token is only needed when reaching Billie from another device (phase 6).
@@ -203,6 +213,7 @@
           answer.bubble.textContent = data.answer;
           renderMeta(answer.wrap, data);
           setHint("");
+          speakAnswer(data.answer);
         } else if (event === "error") {
           answer.bubble.classList.remove("cursor");
           answer.wrap.className = "msg error";
@@ -242,8 +253,14 @@
         (status.files?.pending_proposals || 0) + (status.calendar?.pending_actions || 0);
       els.chipPending.hidden = pending === 0;
       els.chipPending.textContent = `${pending} to approve`;
+      const voicePending = status.voice?.pending_actions || 0;
       loadPermissions(status);
       renderConnection(status.calendar || { configured: false, connected: false });
+      loadVoice(status);
+      if (voicePending) {
+        els.chipPending.hidden = false;
+        els.chipPending.textContent = `${pending + voicePending} to approve`;
+      }
     } catch (error) {
       els.chipLocal.textContent = "backend unreachable";
       els.chipLocal.className = "chip off";
@@ -593,12 +610,290 @@
     els.calendarEvents.appendChild(list);
   }
 
+  /* --- Voice ----------------------------------------------------------- */
+
+  let recorder = null;
+  let recordedChunks = [];
+  let recordingStartedAt = 0;
+  let voiceId = localStorage.getItem("billie_voice_id") || "";
+  let player = null;
+
+  function setTalkState(state) {
+    els.talk.classList.toggle("recording", state === "recording");
+    els.talk.classList.toggle("busy", state === "busy");
+  }
+
+  async function startRecording() {
+    if (recorder || busy) return;
+    if (!navigator.mediaDevices?.getUserMedia) {
+      setHint("This browser will not give a page the microphone over plain HTTP unless it is localhost.", true);
+      return;
+    }
+    let stream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch (error) {
+      setHint(`Microphone unavailable: ${error.message}`, true);
+      return;
+    }
+    recordedChunks = [];
+    recorder = new MediaRecorder(stream);
+    recorder.addEventListener("dataavailable", (event) => {
+      if (event.data.size) recordedChunks.push(event.data);
+    });
+    recorder.addEventListener("stop", () => {
+      stream.getTracks().forEach((track) => track.stop());
+      transcribeRecording();
+    });
+    recorder.start();
+    recordingStartedAt = Date.now();
+    setTalkState("recording");
+    setHint("Listening… (transcribed on this machine)");
+  }
+
+  function stopRecording() {
+    if (!recorder) return;
+    const active = recorder;
+    recorder = null;
+    if (active.state !== "inactive") active.stop();
+    setTalkState("busy");
+  }
+
+  async function transcribeRecording() {
+    const blob = new Blob(recordedChunks, { type: recordedChunks[0]?.type || "audio/webm" });
+    recordedChunks = [];
+    if (blob.size < 1200) {
+      setTalkState("idle");
+      setHint("That was too short to transcribe.");
+      return;
+    }
+    const form = new FormData();
+    form.append("audio", blob, "recording.webm");
+    setHint("Transcribing on this machine…");
+    try {
+      const response = await fetch("/api/voice/transcribe", {
+        method: "POST",
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        body: form,
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.detail || `HTTP ${response.status}`);
+      setTalkState("idle");
+      if (!payload.text.trim()) {
+        setHint("Nothing recognisable in that recording.");
+        return;
+      }
+      setHint(`Heard: “${payload.text}”`);
+      els.input.value = payload.text;
+      els.form.requestSubmit();
+    } catch (error) {
+      setTalkState("idle");
+      setHint(error.message, true);
+    }
+  }
+
+  async function speakAnswer(text) {
+    if (!els.speak.checked || !text.trim()) return;
+    try {
+      const response = await fetch("/api/voice/speak", {
+        method: "POST",
+        headers: headers(),
+        body: JSON.stringify({ text, voice_id: voiceId || undefined }),
+      });
+      if (!response.ok) {
+        const detail = await response.json().catch(() => ({}));
+        throw new Error(detail.detail || `HTTP ${response.status}`);
+      }
+      const url = URL.createObjectURL(await response.blob());
+      if (player) {
+        player.pause();
+        URL.revokeObjectURL(player.src);
+      }
+      player = new Audio(url);
+      player.addEventListener("ended", () => URL.revokeObjectURL(url));
+      await player.play();
+    } catch (error) {
+      els.speak.checked = false;
+      setHint(`Could not speak: ${error.message}`, true);
+    }
+  }
+
+  async function loadVoice(status) {
+    const voice = status?.voice;
+    els.voiceStatus.innerHTML = "";
+    if (!voice || voice.available === false) return;
+
+    const stt = document.createElement("div");
+    stt.className = "voice-row";
+    const sttText = document.createElement("div");
+    sttText.innerHTML = "<strong>Speech to text</strong>";
+    const sttDetail = document.createElement("small");
+    sttDetail.textContent = voice.speech_to_text.installed
+      ? `Whisper ${voice.speech_to_text.model}, on this machine` +
+        (voice.speech_to_text.error ? ` — ${voice.speech_to_text.error}` : "")
+      : "faster-whisper is not installed (pip install faster-whisper)";
+    sttText.appendChild(sttDetail);
+    stt.appendChild(sttText);
+    els.voiceStatus.appendChild(stt);
+
+    const tts = document.createElement("div");
+    tts.className = "voice-row";
+    const ttsText = document.createElement("div");
+    ttsText.innerHTML = "<strong>Speech out</strong>";
+    ttsText.appendChild(Object.assign(document.createElement("small"), {
+      textContent: voice.text_to_speech.configured
+        ? "ElevenLabs — the reply text leaves this machine"
+        : "ELEVENLABS_API_KEY is not set in .env",
+    }));
+    tts.appendChild(ttsText);
+
+    if (voice.text_to_speech.configured) {
+      const picker = document.createElement("select");
+      picker.innerHTML = "<option value=''>Loading voices…</option>";
+      picker.addEventListener("change", () => {
+        voiceId = picker.value;
+        localStorage.setItem("billie_voice_id", voiceId);
+      });
+      tts.appendChild(picker);
+      try {
+        const { voices } = await api("/api/voice/voices");
+        picker.innerHTML = "";
+        for (const entry of voices) {
+          const option = document.createElement("option");
+          option.value = entry.id;
+          option.textContent = entry.cloned ? `${entry.name} (yours)` : entry.name;
+          picker.appendChild(option);
+        }
+        if (voiceId) picker.value = voiceId;
+        else voiceId = picker.value;
+      } catch (error) {
+        picker.innerHTML = `<option value="">${error.message}</option>`;
+      }
+    }
+    els.voiceStatus.appendChild(tts);
+
+    // Speaking replies needs its permission; reflect that in the toggle.
+    const canSpeak = voice.text_to_speech.granted && voice.text_to_speech.configured;
+    els.speak.disabled = !canSpeak;
+    els.speakToggle.classList.toggle("disabled", !canSpeak);
+    els.speakToggle.title = canSpeak
+      ? "Read replies aloud with ElevenLabs."
+      : "Turn on 'Speak replies aloud' under Permissions, and set ELEVENLABS_API_KEY.";
+    if (!canSpeak) els.speak.checked = false;
+
+    els.cloneBox.hidden = !voice.cloning.granted;
+    if (voice.cloning.granted) loadSamples();
+    loadVoiceActions();
+  }
+
+  async function loadSamples() {
+    els.cloneSamples.innerHTML = "";
+    try {
+      const { samples, samples_dir } = await api("/api/voice/samples");
+      if (!samples.length) {
+        els.cloneSamples.appendChild(Object.assign(document.createElement("p"), {
+          className: "panel-empty",
+          textContent: `No recordings in ${samples_dir}.`,
+        }));
+        return;
+      }
+      for (const sample of samples) {
+        const row = document.createElement("label");
+        row.className = "sample";
+        const box = document.createElement("input");
+        box.type = "checkbox";
+        box.value = sample.name;
+        const label = document.createElement("code");
+        label.textContent = `${sample.name} (${Math.round(sample.bytes / 1024)} KB)`;
+        row.append(box, label);
+        els.cloneSamples.appendChild(row);
+      }
+    } catch (error) {
+      els.cloneSamples.textContent = error.message;
+    }
+  }
+
+  async function loadVoiceActions() {
+    els.voiceActions.innerHTML = "";
+    let actions = [];
+    try {
+      actions = (await api("/api/voice/actions")).actions;
+    } catch {
+      return;
+    }
+    for (const action of actions) {
+      const card = document.createElement("div");
+      card.className = "proposal";
+      const head = document.createElement("div");
+      head.className = "proposal-head";
+      head.appendChild(Object.assign(document.createElement("div"), {
+        className: "proposal-path",
+        textContent: action.summary,
+      }));
+      const buttons = document.createElement("div");
+      buttons.className = "proposal-actions";
+      const resolve = async (choice) => {
+        approve.disabled = reject.disabled = true;
+        try {
+          await api(`/api/voice/actions/${action.id}/${choice}`, { method: "POST" });
+          setHint(choice === "approve" ? "Voice created." : "Clone cancelled.");
+          refreshStatus();
+        } catch (error) {
+          setHint(error.message, true);
+          approve.disabled = reject.disabled = false;
+        }
+      };
+      const approve = button("Approve", "approve", () => resolve("approve"));
+      const reject = button("Reject", "reject", () => resolve("reject"));
+      buttons.append(approve, reject);
+      head.appendChild(buttons);
+      card.appendChild(head);
+      card.appendChild(Object.assign(document.createElement("pre"), {
+        className: "preview",
+        textContent: action.preview,
+      }));
+      els.voiceActions.appendChild(card);
+    }
+  }
+
+  els.cloneSubmit?.addEventListener("click", async () => {
+    const chosen = [...els.cloneSamples.querySelectorAll("input:checked")].map((box) => box.value);
+    try {
+      await api("/api/voice/clone/propose", {
+        method: "POST",
+        body: JSON.stringify({
+          name: els.cloneName.value,
+          samples: chosen,
+          i_am_the_speaker: els.cloneAttest.checked,
+        }),
+      });
+      setHint("Clone prepared — approve it below to upload.");
+      loadVoiceActions();
+    } catch (error) {
+      setHint(error.message, true);
+    }
+  });
+
+  // Hold to talk; a quick tap toggles instead, so it works without holding.
+  els.talk.addEventListener("pointerdown", (event) => {
+    event.preventDefault();
+    if (recorder) stopRecording();
+    else startRecording();
+  });
+  els.talk.addEventListener("pointerup", () => {
+    if (recorder && Date.now() - recordingStartedAt > 400) stopRecording();
+  });
+  els.talk.addEventListener("pointerleave", () => {
+    if (recorder && Date.now() - recordingStartedAt > 400) stopRecording();
+  });
+
   function togglePanel(open) {
     els.panel.hidden = !open;
     els.scrim.hidden = !open;
     if (open) {
       loadProposals();
       loadCalendar();
+      loadVoiceActions();
     }
   }
 

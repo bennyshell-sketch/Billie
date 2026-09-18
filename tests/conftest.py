@@ -31,7 +31,11 @@ from billie.integrations.google_oauth import GoogleOAuth
 from billie.integrations.token_store import TokenStore
 from billie.models.router import ModelRouter
 from billie.permissions import Permissions
+from billie.voice.service import VoiceService
+from billie.voice.speech import ElevenLabs
+from billie.voice.transcribe import Transcriber, Transcription
 from billie.workspace import Workspace
+from tests.fake_elevenlabs import FakeElevenLabs
 from tests.fake_google import FakeGoogle
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -96,6 +100,7 @@ def settings(tmp_path: Path) -> Settings:
         BILLIE_DATA_DIR=str(data_dir),
         BILLIE_NOTES_DIR=str(notes_dir),
         BILLIE_WORKSPACE_DIR=str(tmp_path / "workspace"),
+        BILLIE_VOICE_SAMPLES_DIR=str(tmp_path / "voice-samples"),
         BILLIE_API_TOKEN=None,
         BILLIE_COMPLEXITY_THRESHOLD=0.45,
         # The watcher runs on its own schedule; tests drive it explicitly.
@@ -217,6 +222,78 @@ def calendar(
     return GoogleCalendar(connected_oauth, confirmations, audit, client=google.client())
 
 
+class FakeTranscriber(Transcriber):
+    """Stands in for Whisper, so tests need no model download."""
+
+    def __init__(self, text: str = "what is on my calendar tomorrow") -> None:
+        self.name = "fake-whisper"
+        self.text = text
+        self.calls: list[bytes] = []
+        self.is_available = True
+
+    def available(self) -> bool:
+        return self.is_available
+
+    def describe(self) -> dict:
+        return {
+            "provider": self.name,
+            "model": "fake",
+            "installed": True,
+            "loaded": True,
+            "on_device": True,
+            "error": None,
+        }
+
+    def transcribe(self, data: bytes, *, language: str | None = None) -> Transcription:
+        self.calls.append(data)
+        return Transcription(
+            text=self.text,
+            language=language or "en",
+            language_probability=0.99,
+            duration_seconds=1.0,
+            model="fake",
+            latency_ms=5,
+            segments=[{"start": 0.0, "end": 1.0, "text": self.text}],
+        )
+
+
+@pytest.fixture
+def transcriber() -> FakeTranscriber:
+    return FakeTranscriber()
+
+
+@pytest.fixture
+def elevenlabs_api() -> FakeElevenLabs:
+    return FakeElevenLabs()
+
+
+@pytest.fixture
+def speech(elevenlabs_api: FakeElevenLabs, audit: AuditLog) -> ElevenLabs:
+    return ElevenLabs("test-key", client=elevenlabs_api.client(), audit=audit)
+
+
+@pytest.fixture
+def voice(
+    settings: Settings,
+    transcriber: FakeTranscriber,
+    speech: ElevenLabs,
+    permissions: Permissions,
+    confirmations: ConfirmationQueue,
+    audit: AuditLog,
+) -> VoiceService:
+    settings.ensure_dirs()
+    return VoiceService(
+        transcriber=transcriber,
+        speech=speech,
+        permissions=permissions,
+        confirmations=confirmations,
+        audit=audit,
+        samples_dir=settings.voice_samples_dir,
+        max_audio_bytes=settings.max_audio_bytes,
+        default_voice_id=None,
+    )
+
+
 @pytest.fixture
 def assistant(
     settings: Settings,
@@ -227,6 +304,7 @@ def assistant(
     workspace: Workspace,
     confirmations: ConfirmationQueue,
     calendar: GoogleCalendar,
+    voice: VoiceService,
 ) -> Assistant:
     return Assistant(
         settings=settings,
@@ -237,6 +315,7 @@ def assistant(
         workspace=workspace,
         confirmations=confirmations,
         calendar=calendar,
+        voice=voice,
         owner="Ben",
     )
 

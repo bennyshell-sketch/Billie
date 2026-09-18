@@ -62,17 +62,39 @@ calendar, sync), `api/calendar.py`, the Calendar section of the UI panel, and
 move an event. Tool-use in the model loop is a later step; for now a calendar
 change is something you ask for and approve.
 
-## Phase 4 — Voice *(next)*
+## ✅ Phase 4 — Voice *(complete)*
 
-- **Speech to text:** `faster-whisper` running locally. Audio is transcribed
-  on-device; no recording is uploaded to convert it to text.
-- **Text to speech:** ElevenLabs (`textToSpeech.convert`), with Instant Voice
-  Cloning from a 5–10 minute sample of your own voice, plus two or three of
-  their preset voices to switch between. Only your own recordings, only under
-  your own ElevenLabs account.
-- Push-to-talk in the web UI; wake word (Porcupine) as an opt-in extra.
+- **Speech to text:** faster-whisper running locally. The recording is decoded
+  in memory, transcribed, and discarded — no audio is uploaded to turn it into
+  text, and none is written to disk.
+- **Text to speech:** ElevenLabs under your own key, with Instant Voice Cloning
+  from recordings in `voice-samples/`, plus your account's preset voices in a
+  picker. Gated on `voice.speak`, which starts off because it leaves the
+  machine and is billed per character.
+- **Cloning safeguards:** a granted permission, an explicit attestation that
+  the voice is yours, samples confined to `voice-samples/`, an approval listing
+  the exact files, and an audit entry.
+- **Push-to-talk** in the composer: hold the button to talk, or tap to start
+  and stop.
 
-## Phase 5 — Literature and research
+**Delivered:** `voice/` (transcribe, speech, service), `api/voice.py`, the
+Voice section of the UI panel, the talk button, and 63 further tests (316
+total), including `tests/fake_elevenlabs.py` and real WebM/Opus audio fixtures.
+
+**Not done, and why:** **wake-word listening (Porcupine) is not built.** It
+needs a Picovoice access key and a native microphone library running in the
+background service — a third-party dependency and an always-on microphone, for
+a convenience push-to-talk already covers. I would rather add it deliberately
+than half-build it; say the word and it becomes its own small phase.
+
+**Also worth knowing:** the browser microphone capture is the one piece of this
+phase that could not be executed in the build environment — the container has
+no audio device, so `getUserMedia` cannot be exercised there. The path from a
+recorded blob through transcription was tested end to end with real WebM/Opus
+audio; the capture itself is straightforward MediaRecorder code, but it is
+worth a try on your own machine early.
+
+## Phase 5 — Literature and research *(next)*
 
 - PubMed/NCBI E-utilities and Semantic Scholar, cited with DOIs and links —
   these flow into the same citation and confidence machinery that already

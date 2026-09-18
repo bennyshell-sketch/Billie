@@ -12,7 +12,7 @@ from fastapi.staticfiles import StaticFiles
 
 from billie import __version__
 from billie.api import calendar as calendar_api
-from billie.api import chat, files, memory, system
+from billie.api import chat, files, memory, system, voice as voice_api
 from billie.assistant import Assistant
 from billie.audit import AuditLog
 from billie.config import PROJECT_ROOT, Settings, get_settings
@@ -27,6 +27,9 @@ from billie.models.base import ProviderError, ProviderUnavailable
 from billie.models.ollama_provider import OllamaProvider
 from billie.models.router import ModelRouter
 from billie.permissions import PermissionDenied, Permissions
+from billie.voice.service import VoiceService
+from billie.voice.speech import ElevenLabs
+from billie.voice.transcribe import FasterWhisperTranscriber
 from billie.watcher import CalendarSyncTask, FileWatcher
 from billie.workspace import Workspace
 
@@ -88,6 +91,25 @@ def build_assistant(settings: Settings, owner: str = "the user") -> Assistant:
         backup_dir=settings.backup_dir,
         ttl_minutes=settings.proposal_ttl_minutes,
     )
+    voice = VoiceService(
+        transcriber=FasterWhisperTranscriber(
+            settings.whisper_model,
+            device=settings.whisper_device,
+            compute_type=settings.whisper_compute_type,
+            max_seconds=settings.max_audio_seconds,
+            download_root=str(settings.whisper_download_root),
+        ),
+        speech=ElevenLabs(
+            settings.elevenlabs_api_key, model_id=settings.tts_model_id, audit=audit
+        ),
+        permissions=permissions,
+        confirmations=confirmations,
+        audit=audit,
+        samples_dir=settings.voice_samples_dir,
+        max_audio_bytes=settings.max_audio_bytes,
+        default_voice_id=settings.tts_voice_id,
+    )
+
     return Assistant(
         settings=settings,
         store=store,
@@ -97,6 +119,7 @@ def build_assistant(settings: Settings, owner: str = "the user") -> Assistant:
         workspace=workspace,
         confirmations=confirmations,
         calendar=calendar,
+        voice=voice,
         owner=owner,
     )
 
@@ -162,6 +185,7 @@ def create_app(
     app.include_router(memory.router)
     app.include_router(files.permissions_router)
     app.include_router(files.workspace_router)
+    app.include_router(voice_api.router)
     app.include_router(calendar_api.router)
     app.include_router(calendar_api.callback_router)
 

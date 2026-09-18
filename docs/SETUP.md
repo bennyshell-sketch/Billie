@@ -11,6 +11,7 @@ show Windows PowerShell first, with the macOS/Linux equivalent underneath.
 | **An Anthropic API key** | cloud reasoning | Optional — Billie runs local-only without one |
 | **Ollama** | the local model | Optional — Billie runs cloud-only without it |
 | **A Google OAuth client** | calendar | Optional — everything else works without it |
+| **An ElevenLabs API key** | Billie speaking back | Optional — speech *in* works without it |
 
 Billie needs at least one of the two model backends. It will tell you clearly
 if neither is available rather than pretending to answer.
@@ -247,6 +248,67 @@ curl -X POST http://127.0.0.1:8765/api/calendar/actions/<id>/approve
 Disconnecting revokes the token with Google, forgets it locally, and drops the
 synced events out of memory.
 
+## 5d. Voice (optional)
+
+Two halves, and they are very different in where they run.
+
+### Speech to text — on this machine
+
+Whisper runs locally through faster-whisper, which is in `requirements.txt`.
+Nothing you say is uploaded to be turned into text: the browser records, the
+audio is posted to Billie on localhost, decoded in memory, transcribed, and
+discarded.
+
+The first transcription downloads the model into `data/whisper-models` — about
+140 MB for `base`. That one download needs internet; after it, transcription
+works entirely offline. Sizes, smallest and fastest first:
+
+| `BILLIE_WHISPER_MODEL` | Size | Notes |
+|---|---|---|
+| `tiny` | ~75 MB | Fast, noticeably less accurate |
+| `base` | ~140 MB | The default; fine on a laptop CPU |
+| `small` | ~460 MB | Better, still CPU-workable |
+| `medium` / `large-v3` | 1.5–3 GB | Want a GPU (`BILLIE_WHISPER_DEVICE=cuda`, `BILLIE_WHISPER_COMPUTE_TYPE=float16`) |
+
+**Push-to-talk:** the 🎙 button next to Send. Hold it and talk, release to
+send; or tap it once to start and again to stop, if holding is awkward. What
+Whisper heard appears in the hint line and is sent as your message.
+
+> Browsers only give a page the microphone in a secure context. `localhost`
+> counts, so this works over plain HTTP on this machine. Reaching Billie from
+> your phone (phase 6) will need HTTPS.
+
+### Speech out — through ElevenLabs
+
+This half leaves your machine: the text of Billie's reply is sent to ElevenLabs
+under your key and audio comes back. It is billed per character, so
+`voice.speak` is **denied by default**. Turn it on under **Files &
+permissions → Permissions**, then tick **Speak replies** in the composer.
+
+```
+ELEVENLABS_API_KEY=...
+```
+
+Pick a voice from the dropdown under **Voice** in the panel — your account's
+preset voices (Rachel, Adam, and the rest) appear alongside any you have
+cloned. `BILLIE_TTS_VOICE_ID` pins one if you would rather not choose each
+time.
+
+### Cloning your own voice
+
+1. Put 5–10 minutes of clean recordings of yourself into `voice-samples/`.
+   One speaker, no music, no background noise. `.mp3`, `.wav`, `.m4a`,
+   `.flac`, `.ogg`, `.webm`.
+2. Grant `voice.clone` under Permissions.
+3. Open **Voice → Clone your voice**, tick the files, name the voice, and
+   confirm that the recordings are of you.
+4. Approve the upload. The preview lists the exact files and sizes first.
+
+Billie uploads audio from `voice-samples/` and nowhere else — naming a path
+outside it is refused. It cannot verify whose voice is in a file; what it can
+do is keep the source folder narrow, make the step deliberate, and log it.
+**Clone only your own voice.**
+
 ## 6. Run it
 
 ```powershell
@@ -268,10 +330,11 @@ python scripts/demo_server.py      # http://127.0.0.1:8766, scripted replies
 python -m pytest
 ```
 
-253 tests, no network access, a temporary database and workspace per test.
-Google is stood up in memory (`tests/fake_google.py`), so the whole OAuth and
-calendar flow is exercised without an account. Run them before each phase moves
-forward.
+316 tests, no network access, a temporary database and workspace per test.
+Google and ElevenLabs are stood up in memory (`tests/fake_google.py`,
+`tests/fake_elevenlabs.py`), so their whole flows are exercised without an
+account, and audio fixtures are encoded with PyAV so the decoding path runs on
+real WebM/Opus. Run them before each phase moves forward.
 
 ## Using it
 
@@ -345,6 +408,25 @@ own address under *OAuth consent screen → Test users*.
 
 **The sign-in tab returns "did not match this session".** The `state` check
 failed — usually an old tab. Start again from the Connect button.
+
+**"Microphone unavailable" when you hold the talk button.** The browser refused
+or found no input device. Check the site's microphone permission, and that you
+are on `http://127.0.0.1` or `localhost` rather than a LAN address — browsers
+only hand over the microphone in a secure context.
+
+**The first transcription hangs, then errors.** It is downloading the Whisper
+model. Give it a minute on a slow connection; if it fails, the message says so,
+and a smaller `BILLIE_WHISPER_MODEL` downloads faster.
+
+**"Speech to text needs `pip install faster-whisper`."** It is in
+`requirements.txt`; you are probably running outside the virtualenv.
+
+**Transcription is slow.** `base` on a laptop CPU runs roughly in real time.
+Drop to `tiny`, or use a GPU with `BILLIE_WHISPER_DEVICE=cuda` and
+`BILLIE_WHISPER_COMPUTE_TYPE=float16`.
+
+**"ElevenLabs rate limit or character quota reached."** You are out of
+characters for the month. Billie keeps working; only speaking stops.
 
 **Retrieval misses obvious matches.** The offline embedder is lexical. Switch
 to `nomic-embed-text` (step 4), or lower `BILLIE_RETRIEVAL_MIN_SCORE`.

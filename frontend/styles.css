@@ -216,3 +216,34 @@ textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
 .events li { padding: 6px 0; border-top: 1px solid var(--line); }
 .events li:first-child { border-top: 0; }
 .events .when { display: block; color: var(--muted); font-size: 11px; }
+
+/* --- Voice (phase 4) --- */
+.talk {
+  background: var(--bg); border: 1px solid var(--line); border-radius: 12px;
+  padding: 11px 14px; cursor: pointer; font-size: 16px; line-height: 1;
+  touch-action: none; user-select: none;
+}
+.talk:hover { border-color: var(--muted); }
+.talk.recording {
+  background: var(--danger); border-color: var(--danger); color: #fff;
+  animation: pulse 1.2s ease-in-out infinite;
+}
+.talk.busy { opacity: 0.6; cursor: progress; }
+@keyframes pulse { 50% { opacity: 0.65; } }
+.toggle.disabled { opacity: 0.5; }
+
+.voice-row {
+  display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: space-between;
+  padding: 8px 0; border-top: 1px solid var(--line); font-size: 12.5px;
+}
+.voice-row:first-child { border-top: 0; }
+.voice-row small { display: block; color: var(--muted); font-size: 11px; }
+.field { display: block; margin: 10px 0; font-size: 12px; color: var(--muted); }
+.field input {
+  display: block; width: 100%; margin-top: 4px; padding: 7px 9px;
+  border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--ink);
+}
+.attest { margin: 10px 0; align-items: flex-start; }
+.sample { display: flex; gap: 8px; align-items: center; font-size: 12px; padding: 3px 0; }
+.sample code { font: 11px var(--mono); }
+details summary { cursor: pointer; font-size: 13px; font-weight: 600; padding: 4px 0; }

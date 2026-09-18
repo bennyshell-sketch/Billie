@@ -63,6 +63,25 @@ class Settings(BaseSettings):
         default=False, alias="BILLIE_ALLOW_FILE_TOKEN_STORE"
     )
 
+    # --- Voice (phase 4) ---
+    #: Speech to text runs locally; nothing here is sent anywhere.
+    whisper_model: str = Field(default="base", alias="BILLIE_WHISPER_MODEL")
+    whisper_device: str = Field(default="auto", alias="BILLIE_WHISPER_DEVICE")
+    whisper_compute_type: str = Field(default="int8", alias="BILLIE_WHISPER_COMPUTE_TYPE")
+    max_audio_seconds: float = Field(default=300.0, gt=0, alias="BILLIE_MAX_AUDIO_SECONDS")
+    max_audio_mb: float = Field(default=25.0, gt=0, alias="BILLIE_MAX_AUDIO_MB")
+
+    #: Text to speech is the one part of voice that leaves the machine.
+    elevenlabs_api_key: str | None = Field(default=None, alias="ELEVENLABS_API_KEY")
+    tts_voice_id: str | None = Field(default=None, alias="BILLIE_TTS_VOICE_ID")
+    tts_model_id: str = Field(
+        default="eleven_multilingual_v2", alias="BILLIE_TTS_MODEL_ID"
+    )
+    #: Recordings of your own voice, for cloning. Nothing outside it is uploaded.
+    voice_samples_dir: Path = Field(
+        default=Path("voice-samples"), alias="BILLIE_VOICE_SAMPLES_DIR"
+    )
+
     # --- Routing ---
     default_route: Route = Field(default="auto", alias="BILLIE_DEFAULT_ROUTE")
     complexity_threshold: float = Field(
@@ -138,6 +157,8 @@ class Settings(BaseSettings):
         "api_token",
         "google_client_id",
         "google_client_secret",
+        "elevenlabs_api_key",
+        "tts_voice_id",
         mode="before",
     )
     @classmethod
@@ -147,7 +168,9 @@ class Settings(BaseSettings):
             return None
         return value
 
-    @field_validator("data_dir", "notes_dir", "workspace_dir", mode="after")
+    @field_validator(
+        "data_dir", "notes_dir", "workspace_dir", "voice_samples_dir", mode="after"
+    )
     @classmethod
     def _absolutise(cls, value: Path) -> Path:
         return value if value.is_absolute() else (PROJECT_ROOT / value).resolve()
@@ -176,6 +199,19 @@ class Settings(BaseSettings):
     @property
     def google_configured(self) -> bool:
         return bool(self.google_client_id and self.google_client_secret)
+
+    @property
+    def elevenlabs_configured(self) -> bool:
+        return bool(self.elevenlabs_api_key)
+
+    @property
+    def whisper_download_root(self) -> Path:
+        """Where Whisper model files are cached, inside Billie's own data dir."""
+        return self.data_dir / "whisper-models"
+
+    @property
+    def max_audio_bytes(self) -> int:
+        return int(self.max_audio_mb * 1024 * 1024)
 
     @property
     def max_indexed_file_bytes(self) -> int:
@@ -212,6 +248,7 @@ class Settings(BaseSettings):
         self.notes_dir.mkdir(parents=True, exist_ok=True)
         self.workspace_dir.mkdir(parents=True, exist_ok=True)
         self.backup_dir.mkdir(parents=True, exist_ok=True)
+        self.voice_samples_dir.mkdir(parents=True, exist_ok=True)
 
 
 @lru_cache(maxsize=1)

@@ -85,6 +85,21 @@ class MoveEventRequest(BaseModel):
     timezone: str | None = None
 
 
+class SpeakRequest(BaseModel):
+    text: str = Field(min_length=1)
+    voice_id: str | None = None
+
+
+class CloneVoiceRequest(BaseModel):
+    name: str = Field(min_length=1)
+    #: Filenames inside the voice-samples folder. Nothing else is uploaded.
+    samples: list[str] = Field(min_length=1)
+    #: Billie clones your own voice only; this is your attestation that these
+    #: recordings are of you. Software cannot verify it, so it is asked plainly.
+    i_am_the_speaker: bool = False
+    description: str = ""
+
+
 class StatusResponse(BaseModel):
     version: str
     providers: dict[str, Any]

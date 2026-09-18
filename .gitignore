@@ -17,6 +17,8 @@ notes/**
 !notes/example-*.md
 workspace/*
 !workspace/README.md
+voice-samples/*
+!voice-samples/README.md
 audit/
 *.sqlite
 *.sqlite3

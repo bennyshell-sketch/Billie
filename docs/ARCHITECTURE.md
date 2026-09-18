@@ -145,6 +145,34 @@ is answered by the retrieval and citation machinery that already exists,
 instead of teaching the model a new tool. A sync that fails against Google
 does not sweep memory, so a transient outage cannot empty your diary.
 
+## Voice
+
+Split in two, because the two halves have opposite privacy properties and the
+code should make that obvious rather than blur it.
+
+`voice/transcribe.py` is entirely local. Whisper runs here through
+faster-whisper; a recording is decoded in memory with PyAV -- which handles the
+WebM/Opus a browser actually produces, so there is no ffmpeg binary to install
+-- transcribed, and dropped. The model is loaded once behind a lock, because
+faster-whisper models are not thread-safe and two concurrent requests would
+otherwise interleave inside one. faster-whisper is optional: without it the
+voice button reports what to install rather than failing obscurely.
+
+`voice/speech.py` is the part that leaves the machine, and the module says so
+in its first line. It calls the ElevenLabs REST endpoints with httpx -- the
+brief named the JavaScript SDK, but this backend is Python, and the httpx path
+is testable offline and consistent with the Google integration. A hard
+character cap sits in front of synthesis because the API is billed per
+character and a runaway reply is a runaway bill.
+
+`voice/service.py` holds the rules: permissions, size limits, and the two gates
+in front of cloning. Cloning uploads recordings of you to a third party and
+creates something that can say anything in your voice, so it takes a granted
+permission, an explicit attestation that the voice is yours, samples that live
+in `voice-samples/` and nowhere else, and an approval that lists the exact
+files. Software cannot check whose voice is in a WAV. It can keep the source
+folder narrow, make the step deliberate, and write it down.
+
 ## Memory
 
 One SQLite file holds documents, chunks, vectors, conversations, messages,
@@ -206,6 +234,11 @@ Billie is not antivirus and does not claim to be. What it does:
   The audit log records that a token was refreshed, never the token.
 - **Calendar changes** are gated on a grant *and* a per-action confirmation.
   There is no API that changes your calendar directly.
+- **Audio** is never written to disk. A recording is decoded in memory and
+  discarded; the audit log records the duration and character count, not the
+  words -- what was said becomes a chat message, which is recorded there.
+- **Voice cloning** uploads only from `voice-samples/`, behind a grant, an
+  attestation, and an approval.
 
 ## Why these choices
 
@@ -244,6 +277,13 @@ tree to reach five endpoints, and it hides the token handling that most needs
 to be visible in an app whose whole claim is that you can see what it did. The
 OAuth exchange and refresh are about thirty lines here, and
 `tests/fake_google.py` can stand the whole thing up in memory.
+
+**Whisper locally, ElevenLabs remotely — and the UI says which.** Running STT
+on-device is the whole reason voice input is acceptable in an app like this:
+your voice is biometric data and a recording of you saying something private is
+worse to leak than the text of it. TTS has no such problem — the reply is
+Billie's own words, not yours — so paying a cloud service for a good voice is a
+fair trade, made visible by a permission that starts off.
 
 **Calendar events as retrievable documents, not a model tool.** Wiring tool-use
 into the model loop is a bigger change than phase 3 needed, and it would make

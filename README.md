@@ -4,11 +4,11 @@ A local-first personal AI assistant. Single user, runs on your own machine,
 keeps its memory in a local database, and tells you which model answered every
 question.
 
-**Status: Phases 1–3 complete.** Chat with routing between a local model and
+**Status: Phases 1–4 complete.** Chat with routing between a local model and
 the Claude API, memory over your allow-listed folders and your calendar with
 citations, a confidence flag on every answer, revocable per-tool permissions,
 an approve-the-diff workspace, Google Calendar with per-change confirmation,
-and audit logging. The remaining phases are listed in
+voice in and out, and audit logging. The remaining phases are listed in
 [docs/ROADMAP.md](docs/ROADMAP.md).
 
 ---
@@ -25,13 +25,16 @@ and audit logging. The remaining phases are listed in
 | **Confidence flag** | Every answer is labelled `grounded`, `unverified`, or `Billie flagged uncertainty` — an honest signal about whether the answer rested on a source |
 | **File indexing** | An explicit allow-list of folders — Markdown, text, code, PDF, and Word documents. Never the whole drive; a filesystem root or bare home folder is refused with a reason |
 | **Approve-the-diff writes** | Billie can write to one `workspace/` folder, and only by proposing a unified diff you approve. Stale diffs are refused rather than clobbering your edit, and the old version is backed up |
-| **Permission grants** | `file.read`, `file.write`, `calendar.read`, and `calendar.write` can each be revoked on their own, in the UI. Revoked means the code path fails closed, not degrades |
+| **Permission grants** | Seven of them — file read/write, calendar read/write, voice transcribe/speak/clone — each revocable on its own in the UI. Revoked means the code path fails closed, not degrades |
 | **Google Calendar** | OAuth against your own account, with the refresh token in your OS keychain. Events sync into memory, so "what's on Thursday?" is answered with a citation to the event it read |
 | **Confirmed calendar changes** | Creating, moving, and deleting an event each show exactly what will happen — including who gets emailed an invitation — and wait for your yes |
+| **Speech to text** | Whisper runs on this machine through faster-whisper. Push-to-talk in the UI; the recording is decoded in memory and discarded. No audio is uploaded to turn it into text |
+| **Speech out** | ElevenLabs under your own key, with your cloned voice or any of the preset voices. This is the one part of voice that leaves the machine, so it is off until you turn it on |
+| **Voice cloning** | Instant Voice Cloning from recordings in your `voice-samples/` folder, under your own account — gated on a permission, a plain attestation that the voice is yours, and an approval showing the exact files |
 | **Watcher** | Changed files are re-indexed, and the calendar re-synced, in the background |
 | **Audit log** | Every request, model call, routing decision, memory write, permission change, and file write goes to `data/audit.log.jsonl`, with credentials redacted |
 | **Auth** | Bearer-token auth on the API, with a loopback exemption for local use. Required before phase 6 exposes it to your phones |
-| **Tests** | 253 tests covering config, secrets hygiene, retrieval, indexing, routing, grounding, permissions, workspace writes, the OAuth flow, calendar reads and writes, both provider wire protocols, and the HTTP API — none of them touching the network |
+| **Tests** | 316 tests covering config, secrets hygiene, retrieval, indexing, routing, grounding, permissions, workspace writes, the OAuth flow, calendar reads and writes, audio decoding, speech synthesis, voice cloning, both provider wire protocols, and the HTTP API — none of them touching the network |
 
 ## Quick start
 
@@ -63,18 +66,20 @@ Billie/
 │   ├── workspace.py      propose a diff -> you approve -> only then a write
 │   ├── confirmations.py  the same idea for anything external-facing
 │   ├── integrations/     Google OAuth, Calendar, and the token store
+│   ├── voice/            local Whisper, ElevenLabs, and the voice service
 │   ├── watcher.py        background re-indexing and calendar sync
 │   ├── audit.py          append-only audit log with redaction
 │   ├── auth.py           bearer-token auth, loopback exemption
 │   ├── models/           anthropic_provider, ollama_provider, router
 │   ├── memory/           embeddings, SQLite store, extractors, file indexer
-│   └── api/              chat, memory, files, calendar, and system routes
+│   └── api/              chat, memory, files, calendar, voice, system routes
 ├── frontend/             the chat UI (served at /)
 ├── notes/                your notes -- Billie's memory (git-ignored)
 ├── workspace/            the only folder Billie may write to (git-ignored)
+├── voice-samples/        your own recordings, for cloning (git-ignored)
 ├── data/                 database + audit log + backups (git-ignored)
 ├── scripts/demo_server.py
-├── tests/                253 tests
+├── tests/                316 tests
 └── docs/                 SETUP, ARCHITECTURE, ROADMAP
 ```
 
@@ -110,6 +115,10 @@ Billie/
 - Billie does not decide on its own to change your calendar. Creating or moving
   an event is something you ask for, and then approve; the model is not yet
   wired to call these tools itself.
+- Voice cloning cannot verify whose voice is in a recording. What Billie does
+  instead is refuse audio from anywhere outside `voice-samples/`, ask you
+  plainly to confirm it is you, show you the exact files, and log the upload.
+- Wake-word listening is not built. Push-to-talk is — see the roadmap for why.
 - PDF text extraction works on digital PDFs. A scanned document has no text
   layer, and Billie says so rather than indexing an empty file; OCR is not
   included.

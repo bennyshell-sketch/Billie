@@ -16,6 +16,12 @@ python-docx>=1.1
 # Phase 3: OAuth refresh tokens in the OS credential store.
 keyring>=25.0
 
+# Phase 4: speech to text, on this machine. Optional -- without it everything
+# else still works and the voice button says what to install.
+faster-whisper>=1.0
+# Multipart uploads for the recording and voice samples.
+python-multipart>=0.0.9
+
 # Tests
 pytest>=8.0
 pytest-asyncio>=0.23

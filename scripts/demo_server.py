@@ -27,6 +27,8 @@ from billie.config import get_settings  # noqa: E402
 from billie.integrations.google_calendar import GoogleCalendar  # noqa: E402
 from billie.integrations.google_oauth import GoogleOAuth  # noqa: E402
 from billie.integrations.token_store import TokenStore  # noqa: E402
+from billie.voice.speech import ElevenLabs  # noqa: E402
+from billie.voice.transcribe import Transcription  # noqa: E402
 from billie.models.base import (  # noqa: E402
     ChatMessage,
     Completion,
@@ -111,15 +113,53 @@ def fake_calendar(assistant) -> None:
     )
 
 
+def fake_voice(assistant) -> None:
+    """Stand-in speech: a canned transcript and an in-memory ElevenLabs."""
+    sys.path.insert(0, str(ROOT))
+    from tests.fake_elevenlabs import FakeElevenLabs
+
+    class ScriptedTranscriber:
+        name = "demo-whisper"
+
+        def available(self):
+            return True
+
+        def describe(self):
+            return {
+                "provider": self.name,
+                "model": "demo",
+                "installed": True,
+                "loaded": True,
+                "on_device": True,
+                "error": None,
+            }
+
+        def transcribe(self, data: bytes, *, language: str | None = None) -> Transcription:
+            return Transcription(
+                text="What have I got on this week?",
+                language="en",
+                language_probability=0.99,
+                duration_seconds=round(len(data) / 32000, 2),
+                model="demo",
+                latency_ms=40,
+            )
+
+    assistant.voice.transcriber = ScriptedTranscriber()
+    assistant.voice.speech = ElevenLabs(
+        "demo-key", client=FakeElevenLabs().client(), audit=assistant.audit
+    )
+
+
 def main() -> None:
     settings = get_settings()
     assistant = build_assistant(settings, owner="you")
     assistant.router.cloud = ScriptedProvider("anthropic (demo)", "cloud", "claude-opus-5")
     assistant.router.local = ScriptedProvider("ollama (demo)", "local", "llama3.1:8b")
     fake_calendar(assistant)
+    fake_voice(assistant)
     app = create_app(settings, assistant)
     port = settings.port + 1
-    print(f"\n  Billie DEMO (scripted model and calendar, no API calls)")
+    print(f"\n  Billie DEMO (scripted model, calendar and voice; no API calls)")
     print(f"  http://127.0.0.1:{port}\n")
     uvicorn.run(app, host="127.0.0.1", port=port, log_level="warning")
 

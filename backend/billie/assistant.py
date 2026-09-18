@@ -36,6 +36,7 @@ from billie.permissions import (
     FILE_WRITE,
     Permissions,
 )
+from billie.voice.service import VoiceService
 from billie.workspace import Workspace
 
 MAX_HISTORY_MESSAGES = 20
@@ -65,6 +66,7 @@ class Assistant:
         workspace: Workspace | None = None,
         confirmations: ConfirmationQueue | None = None,
         calendar: GoogleCalendar | None = None,
+        voice: VoiceService | None = None,
         owner: str = "the user",
     ) -> None:
         self.settings = settings
@@ -85,6 +87,8 @@ class Assistant:
         )
         #: None until a Google client is configured in .env.
         self.calendar = calendar
+        #: Always present; its parts report themselves as unavailable instead.
+        self.voice = voice
 
     # ------------------------------------------------------------------
     # Memory
@@ -301,6 +305,7 @@ class Assistant:
                 "watch_interval_seconds": self.settings.watch_interval_seconds,
             },
             "calendar": self._calendar_status(),
+            "voice": self.voice.status() if self.voice else {"available": False},
             "routing": {
                 "default_route": self.settings.default_route,
                 "complexity_threshold": self.settings.complexity_threshold,

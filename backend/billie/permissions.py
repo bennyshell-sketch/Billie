@@ -16,6 +16,10 @@ Defaults are deliberate rather than uniform:
   Google account is the consent. `calendar.write` is denied by default, and
   even once granted every change still waits for a per-action confirmation.
 
+* `voice.transcribe` is granted by default because it is purely local.
+  `voice.speak` is denied by default: it sends text to ElevenLabs and costs
+  money per character. `voice.clone` is denied by default too.
+
 Later phases register their own tools here (browsing, purchases), so a grant in
 the UI always corresponds to something that actually exists.
 """
@@ -32,6 +36,9 @@ FILE_READ = "file.read"
 FILE_WRITE = "file.write"
 CALENDAR_READ = "calendar.read"
 CALENDAR_WRITE = "calendar.write"
+VOICE_TRANSCRIBE = "voice.transcribe"
+VOICE_SPEAK = "voice.speak"
+VOICE_CLONE = "voice.clone"
 
 
 @dataclass(frozen=True)
@@ -79,6 +86,36 @@ REGISTRY: dict[str, ToolPermission] = {
         description=(
             "Create, move, or delete events in your Google Calendar -- each one "
             "only after you have seen exactly what will change and approved it."
+        ),
+        default_granted=False,
+    ),
+    VOICE_TRANSCRIBE: ToolPermission(
+        name=VOICE_TRANSCRIBE,
+        title="Transcribe your speech",
+        description=(
+            "Turn what you say into text using Whisper, running on this machine. "
+            "No audio is sent anywhere -- the recording is decoded in memory and "
+            "discarded once it has been transcribed."
+        ),
+        default_granted=True,
+    ),
+    VOICE_SPEAK: ToolPermission(
+        name=VOICE_SPEAK,
+        title="Speak replies aloud",
+        description=(
+            "Send the text of Billie's reply to ElevenLabs under your API key and "
+            "play the audio back. This leaves your machine and is billed per "
+            "character, so it is off until you turn it on."
+        ),
+        default_granted=False,
+    ),
+    VOICE_CLONE: ToolPermission(
+        name=VOICE_CLONE,
+        title="Create a cloned voice",
+        description=(
+            "Upload recordings from your voice-samples folder to ElevenLabs to "
+            "create a voice under your own account. Only ever your own voice, "
+            "and only after you confirm the exact files."
         ),
         default_granted=False,
     ),

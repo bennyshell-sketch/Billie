@@ -42,6 +42,28 @@ class SearchRequest(BaseModel):
     top_k: int = Field(default=5, ge=1, le=50)
 
 
+class PermissionUpdate(BaseModel):
+    granted: bool
+    note: str = ""
+
+
+class ProposeWriteRequest(BaseModel):
+    """Ask for a change. Returns a diff; writes nothing."""
+
+    path: str = Field(min_length=1, description="Path relative to the workspace folder")
+    content: str
+    note: str = ""
+
+
+class ProposeDeleteRequest(BaseModel):
+    path: str = Field(min_length=1)
+    note: str = ""
+
+
+class RejectRequest(BaseModel):
+    reason: str = ""
+
+
 class StatusResponse(BaseModel):
     version: str
     providers: dict[str, Any]

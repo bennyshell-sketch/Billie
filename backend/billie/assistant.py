@@ -18,10 +18,12 @@ from billie import __version__
 from billie.audit import AuditLog
 from billie.config import Settings
 from billie.grounding import build_system_prompt, build_user_content, evaluate
-from billie.memory.notes import IndexReport, index_notes
+from billie.memory.indexer import FILE_SOURCE_TYPE, IndexReport, index_roots
 from billie.memory.store import MemoryStore, RetrievedChunk
 from billie.models.base import ChatMessage, Completion, TextDelta
 from billie.models.router import ModelRouter, RoutingDecision
+from billie.permissions import FILE_READ, FILE_WRITE, Permissions
+from billie.workspace import Workspace
 
 MAX_HISTORY_MESSAGES = 20
 
@@ -42,6 +44,8 @@ class Assistant:
         store: MemoryStore,
         router: ModelRouter,
         audit: AuditLog,
+        permissions: Permissions | None = None,
+        workspace: Workspace | None = None,
         owner: str = "the user",
     ) -> None:
         self.settings = settings
@@ -49,15 +53,27 @@ class Assistant:
         self.router = router
         self.audit = audit
         self.owner = owner
+        self.permissions = permissions or Permissions(store, audit)
+        self.workspace = workspace or Workspace(
+            settings.workspace_dir,
+            store,
+            audit,
+            backup_dir=settings.backup_dir,
+            ttl_minutes=settings.proposal_ttl_minutes,
+        )
 
     # ------------------------------------------------------------------
     # Memory
     # ------------------------------------------------------------------
-    def reindex_notes(self) -> IndexReport:
-        report = index_notes(self.store, self.settings.notes_dir)
-        self.audit.record(
-            "memory.reindex", folder=str(self.settings.notes_dir), **report.to_dict()
+    def reindex_files(self) -> IndexReport:
+        """Re-index every allow-listed folder. Needs the file.read grant."""
+        self.permissions.require(FILE_READ)
+        report = index_roots(
+            self.store,
+            self.settings.index_roots(),
+            max_bytes=self.settings.max_indexed_file_bytes,
         )
+        self.audit.record("memory.reindex", **report.to_dict())
         return report
 
     def teach(self, content: str, title: str | None = None, tags: list[str] | None = None) -> dict:
@@ -75,10 +91,22 @@ class Assistant:
         return {"document_id": document_id, "source_id": source_id, "title": title, "changed": changed}
 
     def search(self, query: str, top_k: int | None = None) -> list[RetrievedChunk]:
+        """Retrieve from memory, honouring the file.read grant.
+
+        With file.read revoked, facts you taught Billie directly are still
+        available -- they live in Billie's own database, not on your disk --
+        but nothing read from a file is returned.
+        """
+        source_types = None
+        if not self.permissions.is_granted(FILE_READ):
+            source_types = [
+                kind for kind in ("fact", "conversation") if kind != FILE_SOURCE_TYPE
+            ]
         return self.store.search(
             query,
             top_k=top_k or self.settings.retrieval_top_k,
             min_score=self.settings.retrieval_min_score,
+            source_types=source_types,
         )
 
     # ------------------------------------------------------------------
@@ -213,6 +241,17 @@ class Assistant:
             "version": __version__,
             "providers": providers,
             "memory": self.store.stats(),
+            "permissions": self.permissions.state(),
+            "files": {
+                "roots": [
+                    {"name": name, "path": str(path), "exists": path.exists()}
+                    for name, path in self.settings.index_roots()
+                ],
+                "workspace": str(self.settings.workspace_dir),
+                "workspace_writable": self.permissions.is_granted(FILE_WRITE),
+                "pending_proposals": len(self.workspace.pending()),
+                "watch_interval_seconds": self.settings.watch_interval_seconds,
+            },
             "routing": {
                 "default_route": self.settings.default_route,
                 "complexity_threshold": self.settings.complexity_threshold,

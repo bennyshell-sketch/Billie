@@ -23,6 +23,14 @@
     refresh: $("btn-refresh"),
     reindex: $("btn-reindex"),
     newChat: $("btn-new"),
+    panel: $("panel"),
+    panelOpen: $("btn-panel"),
+    panelClose: $("panel-close"),
+    scrim: $("scrim"),
+    proposals: $("proposals"),
+    permissions: $("permissions"),
+    roots: $("roots"),
+    chipPending: $("chip-pending"),
   };
 
   // A token is only needed when reaching Billie from another device (phase 6).
@@ -226,6 +234,11 @@
       };
       paint(els.chipLocal, status.providers.local, "local");
       paint(els.chipCloud, status.providers.cloud, "cloud");
+
+      const pending = status.files?.pending_proposals || 0;
+      els.chipPending.hidden = pending === 0;
+      els.chipPending.textContent = `${pending} to approve`;
+      loadPermissions(status);
     } catch (error) {
       els.chipLocal.textContent = "backend unreachable";
       els.chipLocal.className = "chip off";
@@ -263,6 +276,169 @@
     }
   });
 
+  /* --- Files, permissions, and pending diffs --------------------------- */
+
+  async function api(path, options = {}) {
+    const response = await fetch(path, { headers: headers(), ...options });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload.detail || `HTTP ${response.status}`);
+    return payload;
+  }
+
+  function renderDiff(text) {
+    const pre = document.createElement("pre");
+    pre.className = "diff";
+    for (const line of text.split("\n")) {
+      const span = document.createElement("span");
+      if (line.startsWith("+++") || line.startsWith("---")) span.className = "hunk";
+      else if (line.startsWith("@@")) span.className = "hunk";
+      else if (line.startsWith("+")) span.className = "add";
+      else if (line.startsWith("-")) span.className = "del";
+      span.textContent = line + "\n";
+      pre.appendChild(span);
+    }
+    return pre;
+  }
+
+  async function resolveProposal(id, action, buttons) {
+    buttons.forEach((button) => (button.disabled = true));
+    try {
+      await api(`/api/workspace/proposals/${id}/${action}`, { method: "POST" });
+      setHint(action === "approve" ? "Change applied." : "Change rejected.");
+      await Promise.all([loadProposals(), refreshStatus()]);
+    } catch (error) {
+      setHint(error.message, true);
+      buttons.forEach((button) => (button.disabled = false));
+    }
+  }
+
+  async function loadProposals() {
+    let proposals = [];
+    try {
+      proposals = (await api("/api/workspace/proposals")).proposals;
+    } catch (error) {
+      els.proposals.textContent = error.message;
+      return;
+    }
+
+    els.chipPending.hidden = proposals.length === 0;
+    els.chipPending.textContent = `${proposals.length} to approve`;
+
+    els.proposals.innerHTML = "";
+    if (!proposals.length) {
+      const empty = document.createElement("p");
+      empty.className = "panel-empty";
+      empty.textContent = "Nothing waiting.";
+      els.proposals.appendChild(empty);
+      return;
+    }
+
+    for (const proposal of proposals) {
+      const card = document.createElement("div");
+      card.className = "proposal";
+
+      const head = document.createElement("div");
+      head.className = "proposal-head";
+      const label = document.createElement("div");
+      label.className = "proposal-path";
+      label.textContent = `${proposal.action}: ${proposal.path}`;
+      head.appendChild(label);
+
+      const actions = document.createElement("div");
+      actions.className = "proposal-actions";
+      const approve = document.createElement("button");
+      approve.className = "approve";
+      approve.textContent = "Approve";
+      const reject = document.createElement("button");
+      reject.className = "reject";
+      reject.textContent = "Reject";
+      approve.addEventListener("click", () => resolveProposal(proposal.id, "approve", [approve, reject]));
+      reject.addEventListener("click", () => resolveProposal(proposal.id, "reject", [approve, reject]));
+      actions.append(approve, reject);
+      head.appendChild(actions);
+
+      card.appendChild(head);
+      if (proposal.note) {
+        const note = document.createElement("div");
+        note.className = "panel-note";
+        note.style.padding = "8px 12px 0";
+        note.textContent = proposal.note;
+        card.appendChild(note);
+      }
+      card.appendChild(renderDiff(proposal.diff));
+      els.proposals.appendChild(card);
+    }
+  }
+
+  async function loadPermissions(status) {
+    els.permissions.innerHTML = "";
+    for (const permission of status.permissions || []) {
+      const row = document.createElement("div");
+      row.className = "permission";
+
+      const text = document.createElement("div");
+      const title = document.createElement("h4");
+      title.textContent = permission.title;
+      const description = document.createElement("p");
+      description.textContent = permission.description;
+      text.append(title, description);
+
+      const toggle = document.createElement("label");
+      toggle.className = "switch";
+      const input = document.createElement("input");
+      input.type = "checkbox";
+      input.checked = permission.granted;
+      input.addEventListener("change", async () => {
+        try {
+          await api(`/api/permissions/${permission.tool}`, {
+            method: "POST",
+            body: JSON.stringify({ granted: input.checked }),
+          });
+          setHint(`${permission.title}: ${input.checked ? "granted" : "revoked"}.`);
+          refreshStatus();
+        } catch (error) {
+          input.checked = !input.checked;
+          setHint(error.message, true);
+        }
+      });
+      toggle.append(input, document.createTextNode(permission.granted ? "on" : "off"));
+
+      row.append(text, toggle);
+      els.permissions.appendChild(row);
+    }
+
+    els.roots.innerHTML = "";
+    for (const root of status.files?.roots || []) {
+      const item = document.createElement("li");
+      const name = document.createElement("strong");
+      name.textContent = root.name;
+      const path = document.createElement("code");
+      path.textContent = ` ${root.path}`;
+      item.append(name, path);
+      if (!root.exists) {
+        const missing = document.createElement("span");
+        missing.className = "missing";
+        missing.textContent = " (not found)";
+        item.appendChild(missing);
+      }
+      els.roots.appendChild(item);
+    }
+  }
+
+  function togglePanel(open) {
+    els.panel.hidden = !open;
+    els.scrim.hidden = !open;
+    if (open) loadProposals();
+  }
+
+  els.panelOpen.addEventListener("click", () => togglePanel(true));
+  els.panelClose.addEventListener("click", () => togglePanel(false));
+  els.scrim.addEventListener("click", () => togglePanel(false));
+  els.chipPending.addEventListener("click", () => togglePanel(true));
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && !els.panel.hidden) togglePanel(false);
+  });
+
   els.refresh.addEventListener("click", refreshStatus);
 
   els.reindex.addEventListener("click", async () => {
@@ -270,7 +446,11 @@
     try {
       const response = await fetch("/api/memory/reindex", { method: "POST", headers: headers() });
       const report = await response.json();
-      setHint(`Notes indexed: ${report.indexed} new/changed, ${report.unchanged} unchanged, ${report.removed} removed.`);
+      if (!response.ok) throw new Error(report.detail || `HTTP ${response.status}`);
+      setHint(
+        `Indexed ${report.indexed} new/changed, ${report.unchanged} unchanged, ` +
+          `${report.removed} removed, across ${report.roots.length} folder(s).`
+      );
     } catch (error) {
       setHint(`Re-index failed: ${error.message}`, true);
     }

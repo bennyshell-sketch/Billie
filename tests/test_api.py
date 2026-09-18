@@ -101,7 +101,7 @@ def test_memory_endpoints_teach_search_and_reindex(client: TestClient, assistant
     assert reindexed.json()["indexed"] == 1
 
     documents = client.get("/api/memory/documents").json()["documents"]
-    assert {doc["source_type"] for doc in documents} == {"fact", "note"}
+    assert {doc["source_type"] for doc in documents} == {"fact", "file"}
 
 
 def test_conversations_can_be_listed_and_replayed(client: TestClient):

@@ -26,6 +26,8 @@ from billie.models.base import (
     TextDelta,
 )
 from billie.models.router import ModelRouter
+from billie.permissions import Permissions
+from billie.workspace import Workspace
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
@@ -88,8 +90,11 @@ def settings(tmp_path: Path) -> Settings:
         ANTHROPIC_API_KEY="test-key-not-real",
         BILLIE_DATA_DIR=str(data_dir),
         BILLIE_NOTES_DIR=str(notes_dir),
+        BILLIE_WORKSPACE_DIR=str(tmp_path / "workspace"),
         BILLIE_API_TOKEN=None,
         BILLIE_COMPLEXITY_THRESHOLD=0.45,
+        # The watcher runs on its own schedule; tests drive it explicitly.
+        BILLIE_WATCH_INTERVAL_SECONDS=0,
     )
 
 
@@ -128,11 +133,39 @@ def router(cloud: FakeProvider, local: FakeProvider, settings: Settings) -> Mode
 
 
 @pytest.fixture
+def permissions(store: MemoryStore, audit: AuditLog) -> Permissions:
+    return Permissions(store, audit)
+
+
+@pytest.fixture
+def workspace(settings: Settings, store: MemoryStore, audit: AuditLog) -> Workspace:
+    settings.ensure_dirs()
+    return Workspace(
+        settings.workspace_dir,
+        store,
+        audit,
+        backup_dir=settings.backup_dir,
+        ttl_minutes=settings.proposal_ttl_minutes,
+    )
+
+
+@pytest.fixture
 def assistant(
-    settings: Settings, store: MemoryStore, router: ModelRouter, audit: AuditLog
+    settings: Settings,
+    store: MemoryStore,
+    router: ModelRouter,
+    audit: AuditLog,
+    permissions: Permissions,
+    workspace: Workspace,
 ) -> Assistant:
     return Assistant(
-        settings=settings, store=store, router=router, audit=audit, owner="Ben"
+        settings=settings,
+        store=store,
+        router=router,
+        audit=audit,
+        permissions=permissions,
+        workspace=workspace,
+        owner="Ben",
     )
 
 

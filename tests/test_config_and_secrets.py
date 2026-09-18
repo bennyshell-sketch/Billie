@@ -91,6 +91,48 @@ def test_defaults_match_the_documented_model():
     assert 0.0 <= settings.complexity_threshold <= 1.0
 
 
+def test_indexed_folders_parse_from_a_comma_separated_env_var(monkeypatch, tmp_path):
+    """The .env form is a plain comma-separated string, not JSON."""
+    first, second = tmp_path / "research", tmp_path / "projects"
+    monkeypatch.setenv("BILLIE_INDEXED_FOLDERS", f"{first}, {second}")
+    settings = Settings(_env_file=None)
+    assert settings.indexed_folders == [first.resolve(), second.resolve()]
+
+
+def test_an_empty_allow_list_means_no_extra_folders(monkeypatch):
+    monkeypatch.setenv("BILLIE_INDEXED_FOLDERS", "")
+    assert Settings(_env_file=None).indexed_folders == []
+
+
+def test_relative_allow_list_entries_resolve_under_the_project_root(monkeypatch):
+    monkeypatch.setenv("BILLIE_INDEXED_FOLDERS", "docs")
+    settings = Settings(_env_file=None)
+    assert settings.indexed_folders == [(PROJECT_ROOT / "docs").resolve()]
+
+
+def test_index_roots_always_include_notes_and_workspace_without_duplicates(tmp_path):
+    notes = tmp_path / "notes"
+    settings = Settings(
+        _env_file=None,
+        BILLIE_NOTES_DIR=str(notes),
+        BILLIE_WORKSPACE_DIR=str(tmp_path / "workspace"),
+        # Naming the notes folder again must not index it twice.
+        BILLIE_INDEXED_FOLDERS=f"{notes},{tmp_path / 'research'}",
+    )
+    names = [name for name, _ in settings.index_roots()]
+    assert names == ["notes", "workspace", "research"]
+
+
+def test_two_folders_with_the_same_name_stay_distinguishable(tmp_path):
+    """Citations are keyed by root name, so collisions have to be resolved."""
+    settings = Settings(
+        _env_file=None,
+        BILLIE_INDEXED_FOLDERS=f"{tmp_path / 'a' / 'docs'},{tmp_path / 'b' / 'docs'}",
+    )
+    names = [name for name, _ in settings.index_roots()]
+    assert names == ["notes", "workspace", "docs", "docs-2"]
+
+
 @pytest.mark.parametrize("value", [-0.5, 1.5])
 def test_complexity_threshold_is_bounded(value):
     with pytest.raises(Exception):

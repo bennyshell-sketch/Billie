@@ -102,17 +102,86 @@ existing notes are only re-embedded when their content changes, so delete
 Ollama runs open-weight models only. It cannot run Claude — Claude is reached
 solely through the Anthropic API, using your key.
 
-## 5. Add some notes
+## 5. Choose what Billie can read
 
-Drop `.md` or `.txt` files into `notes/`. Billie indexes that folder on every
-start, and you can re-index at any time from the UI button or:
+Drop `.md` or `.txt` files into `notes/` to get started. Billie indexes that
+folder, plus `workspace/`, on every start.
+
+To add your own folders, list them in `.env`:
+
+```
+BILLIE_INDEXED_FOLDERS=C:\Users\you\Documents\Research,C:\Projects\scripts
+```
+
+Comma-separated, and always explicit. **There is no "index my whole drive"
+option.** A filesystem root, a drive letter, or your bare home folder is
+refused with an explanation rather than walked, and the reason appears in the
+index report and the log.
+
+What gets indexed: Markdown, text, and code files (`.py`, `.js`, `.sql`,
+`.json`, `.yaml`, and friends), plus `.pdf` and `.docx`. Skipped automatically:
+`node_modules`, `.git`, `.venv`, `__pycache__`, `dist`, `build` and similar;
+dotfiles; symlinks; anything over `BILLIE_MAX_INDEXED_FILE_MB` (8 MB by
+default); and binaries. Anything skipped is listed in the index report with the
+reason.
+
+Re-index at any time from the **Re-index files** button, or:
 
 ```powershell
 curl -X POST http://127.0.0.1:8765/api/memory/reindex
 ```
 
-Nothing outside `notes/` is ever read. Phase 2 adds an allow-list of further
-folders — still explicitly configured, never the whole drive.
+You usually won't need to: the watcher checks every
+`BILLIE_WATCH_INTERVAL_SECONDS` (60 by default) and re-indexes only when a
+file's modification time or size has changed. Set it to `0` to turn it off.
+
+> **Scanned PDFs.** Extraction reads a PDF's text layer. A scan has none, so
+> Billie reports "no extractable text" rather than indexing an empty file. OCR
+> is not included.
+
+## 5a. What Billie may do: permissions
+
+Open **Files & permissions** in the UI. Two grants exist today, and each is
+revoked on its own:
+
+| Permission | Default | What it controls |
+|---|---|---|
+| `file.read` | **granted** | Indexing and searching your allow-listed folders. Naming a folder in `.env` is already the act of consent, so this starts on. Revoke it and indexing stops and file content drops out of answers — facts you taught Billie directly still work, because those live in its own database |
+| `file.write` | **denied** | Applying a change to a workspace file. Billie cannot write anything until you grant this, and even then only through a diff you approved |
+
+Later phases register their own grants (calendar, browsing, purchases) as those
+capabilities arrive, so a switch in the UI always controls something real.
+
+## 5b. How Billie writes a file
+
+Billie writes to exactly one folder, `workspace/`, and never silently:
+
+1. A change is **proposed** — this produces a unified diff and touches nothing.
+2. The diff appears under **Files & permissions → Pending changes**, and the
+   header shows a count of what is waiting.
+3. You **approve** or **reject** it. Only an approval writes.
+
+Three further guards:
+
+- `file.write` must be granted, or the approval is refused with a 403.
+- If the file changed after the diff was generated, the approval is refused
+  (HTTP 409) rather than overwriting your edit. Ask for a fresh diff.
+- The previous version of any overwritten or deleted file is copied to
+  `data/workspace-backups/` first.
+
+Unapproved proposals expire after `BILLIE_PROPOSAL_TTL_MINUTES` (2 hours).
+
+Driving it from the command line:
+
+```powershell
+# Propose -- returns a diff, writes nothing
+curl -X POST http://127.0.0.1:8765/api/workspace/propose `
+  -H "Content-Type: application/json" `
+  -d '{\"path\": \"drafts/plan.md\", \"content\": \"# Plan\\n\"}'
+
+# Approve, using the id from that response
+curl -X POST http://127.0.0.1:8765/api/workspace/proposals/<id>/approve
+```
 
 ## 6. Run it
 
@@ -135,8 +204,8 @@ python scripts/demo_server.py      # http://127.0.0.1:8766, scripted replies
 python -m pytest
 ```
 
-93 tests, no network access, a temporary database per test. Run them before
-each phase moves forward.
+167 tests, no network access, a temporary database and workspace per test. Run
+them before each phase moves forward.
 
 ## Using it
 
@@ -181,7 +250,19 @@ has a stray space. Re-copy it from the Anthropic console.
 
 **Answers are always flagged `unverified`.** Nothing is being retrieved. Check
 that `notes/` has `.md`/`.txt` files in it, re-index, and try
-`POST /api/memory/search` to see what retrieval returns for your query.
+`POST /api/memory/search` to see what retrieval returns for your query. If
+`file.read` is revoked, nothing from disk is retrieved at all.
+
+**"Permission 'file.write' is not granted."** Expected: that is the default.
+Turn it on under **Files & permissions**.
+
+**A folder in `BILLIE_INDEXED_FOLDERS` is being ignored.** Check
+`GET /api/status` → `files.roots` for `exists: false`, and the startup log for
+a refusal. Folders that are too broad (a drive root, your bare home folder) are
+refused on purpose.
+
+**An approval returns 409.** The file changed after the diff was generated.
+Nothing was written; propose the change again against the current content.
 
 **Retrieval misses obvious matches.** The offline embedder is lexical. Switch
 to `nomic-embed-text` (step 4), or lower `BILLIE_RETRIEVAL_MIN_SCORE`.

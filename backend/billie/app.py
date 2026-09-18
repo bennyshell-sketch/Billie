@@ -11,7 +11,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from billie import __version__
-from billie.api import chat, memory, system
+from billie.api import chat, files, memory, system
 from billie.assistant import Assistant
 from billie.audit import AuditLog
 from billie.config import PROJECT_ROOT, Settings, get_settings
@@ -21,6 +21,9 @@ from billie.models.anthropic_provider import AnthropicProvider
 from billie.models.base import ProviderError, ProviderUnavailable
 from billie.models.ollama_provider import OllamaProvider
 from billie.models.router import ModelRouter
+from billie.permissions import PermissionDenied, Permissions
+from billie.watcher import FileWatcher
+from billie.workspace import Workspace
 
 FRONTEND_DIR = PROJECT_ROOT / "frontend"
 logger = logging.getLogger("billie")
@@ -50,8 +53,22 @@ def build_assistant(settings: Settings, owner: str = "the user") -> Assistant:
         complexity_threshold=settings.complexity_threshold,
         audit=audit,
     )
+    permissions = Permissions(store, audit)
+    workspace = Workspace(
+        settings.workspace_dir,
+        store,
+        audit,
+        backup_dir=settings.backup_dir,
+        ttl_minutes=settings.proposal_ttl_minutes,
+    )
     return Assistant(
-        settings=settings, store=store, router=router, audit=audit, owner=owner
+        settings=settings,
+        store=store,
+        router=router,
+        audit=audit,
+        permissions=permissions,
+        workspace=workspace,
+        owner=owner,
     )
 
 
@@ -75,14 +92,25 @@ def create_app(
             cloud_model=settings.cloud_model,
             local_model=settings.ollama_model,
         )
-        # Keep memory in sync with the notes folder on every start.
+        # Keep memory in sync with the allow-listed folders on every start.
         try:
-            report = app.state.assistant.reindex_notes()
-            logger.info("Indexed notes: %s", report.to_dict())
+            report = app.state.assistant.reindex_files()
+            logger.info("Indexed files: %s", report.to_dict())
+            for refusal in report.refused_roots:
+                logger.warning("Refused to index %s", refusal)
+        except PermissionDenied:
+            logger.info("Indexing skipped: the file.read permission is revoked")
         except Exception:  # noqa: BLE001 - indexing must never block startup
-            logger.exception("Notes indexing failed at startup")
-        yield
-        app.state.assistant.store.close()
+            logger.exception("Indexing failed at startup")
+
+        watcher = FileWatcher(app.state.assistant, settings.watch_interval_seconds)
+        app.state.watcher = watcher
+        watcher.start()
+        try:
+            yield
+        finally:
+            await watcher.stop()
+            app.state.assistant.store.close()
 
     app = FastAPI(
         title="Billie",
@@ -96,6 +124,8 @@ def create_app(
     app.include_router(system.router)
     app.include_router(chat.router)
     app.include_router(memory.router)
+    app.include_router(files.permissions_router)
+    app.include_router(files.workspace_router)
 
     @app.exception_handler(ProviderUnavailable)
     async def _unavailable(_request, exc: ProviderUnavailable) -> JSONResponse:
@@ -104,6 +134,12 @@ def create_app(
     @app.exception_handler(ProviderError)
     async def _provider_error(_request, exc: ProviderError) -> JSONResponse:
         return JSONResponse(status_code=502, content={"detail": str(exc)})
+
+    @app.exception_handler(PermissionDenied)
+    async def _permission_denied(_request, exc: PermissionDenied) -> JSONResponse:
+        return JSONResponse(
+            status_code=403, content={"detail": str(exc), "permission": exc.tool}
+        )
 
     if serve_frontend and FRONTEND_DIR.exists():
         app.mount(

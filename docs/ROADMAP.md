@@ -17,20 +17,26 @@ setup guide.
 
 ---
 
-## Phase 2 — File indexing and search
+## ✅ Phase 2 — File indexing and search *(complete)*
 
 - An allow-list of folders in `.env` (`BILLIE_INDEXED_FOLDERS`), each one
-  explicitly added. Never the whole drive.
-- More file types: PDF, DOCX, code files.
-- A designated `workspace/` folder Billie may write to — **every write shown as
-  a diff you approve before it is saved.** No silent edits.
-- Per-tool permission grants (file read, file write) you can revoke
-  individually, enforced in the API layer and recorded in the audit log.
-- Watch mode so edits re-index without a manual trigger.
+  explicitly added. Roots that are too broad — a filesystem root, a drive
+  letter, your bare home folder — are refused with a reason.
+- Markdown, text, code, PDF (pypdf) and DOCX (python-docx). Noise directories,
+  dotfiles, symlinks, and oversized files are skipped and reported.
+- A `workspace/` folder Billie may write to, and only by proposing a unified
+  diff you approve. Stale diffs are refused rather than clobbering an edit;
+  the previous version is backed up; writes are atomic.
+- Per-tool permission grants (`file.read`, `file.write`), revocable
+  individually in the UI, enforced in the service layer, audited on every
+  change and every denial.
+- A background watcher that re-indexes changed files without a manual trigger.
 
-*Checks in before phase 3.*
+**Delivered:** `memory/extract.py`, `memory/indexer.py`, `permissions.py`,
+`workspace.py`, `watcher.py`, `api/files.py`, the Files & permissions panel in
+the UI, and 74 further tests (167 total).
 
-## Phase 3 — Google Calendar
+## Phase 3 — Google Calendar *(next)*
 
 - OAuth device flow against your own Google account; the refresh token stored
   in the OS keychain, not in `.env`.

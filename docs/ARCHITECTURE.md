@@ -8,10 +8,12 @@
         ▼
   auth.py ─── bearer token, loopback exemption
         ▼
+  permissions.py ─── is this tool granted? (fails closed)
+        ▼
   assistant.py
         │
         ├─ 1. retrieve   memory/store.py     hybrid vector + lexical search
-        │                                     over notes and taught facts
+        │                                     over indexed files and taught facts
         ├─ 2. route      models/router.py    privacy → availability → complexity
         ├─ 3. answer     models/anthropic_provider.py  (cloud)
         │                models/ollama_provider.py     (local)
@@ -49,12 +51,68 @@ explanation.
 
 Routing deliberately does not call a model to decide which model to call.
 
+## Reading your files
+
+`memory/indexer.py` walks the roots from `Settings.index_roots()` — your notes
+folder, the workspace, and anything in `BILLIE_INDEXED_FOLDERS`. There is no
+mode that walks everything: a root that is a filesystem root, a drive letter,
+or your bare home folder is refused by `refusal_reason()` with a message, and
+that refusal is reported rather than logged and forgotten.
+
+Each file is keyed `<root-name>/<relative path>`, which is also how it is cited,
+so an answer always says which folder it came from. Extraction
+(`memory/extract.py`) handles text and code directly, PDFs via pypdf, and DOCX
+via python-docx; both libraries are optional, and a missing one produces an
+"install X" line in the index report instead of a crash. Anything skipped —
+symlinks, oversized files, scans with no text layer, binaries — is reported
+with its reason.
+
+`watcher.py` polls those roots on an interval, comparing a snapshot of paths,
+modification times, and sizes. It reads no file contents, so an idle pass costs
+a directory walk; re-indexing only happens when that snapshot changes. Polling
+rather than OS file-system events keeps it dependency-free and identical across
+Windows, macOS, and Linux.
+
+## Permissions
+
+`permissions.py` holds a registry of named tools, each with a description and a
+default. State lives in the database, so a grant survives a restart; the audit
+log records every change and every denial.
+
+Defaults are per-tool rather than uniform. `file.read` starts granted because
+naming a folder in `BILLIE_INDEXED_FOLDERS` is already the explicit act of
+consent — the allow-list *is* the grant. `file.write` starts denied, because
+nothing about configuring Billie implies permission to change your files.
+
+Revoked means *fails closed*, never *degrades quietly*: `reindex_files()` and
+the approve endpoint raise `PermissionDenied` (HTTP 403, naming the tool), and
+retrieval with `file.read` revoked returns no file-sourced chunks at all rather
+than a thinner set.
+
+## Writing files
+
+`workspace.py` has one rule: proposing and writing are different operations,
+and only the second one touches disk.
+
+A proposal computes a unified diff, records the hash of the file as it was at
+that moment, and stores the whole thing as `pending`. Approval re-reads the
+file, compares hashes, and refuses with `ProposalConflict` (HTTP 409) if
+anything changed — so a diff you approved an hour ago cannot silently discard
+an edit you made in between. The write itself goes to a temporary file that is
+then renamed over the target, so an interrupted write cannot leave a truncated
+file. The previous version is copied to `data/workspace-backups/` first.
+
+Every path is confined to the workspace after symlink resolution, so `../`,
+an absolute path, and a symlink pointing outside are all refused by the same
+check rather than by three separate special cases.
+
 ## Memory
 
-One SQLite file holds documents, chunks, vectors, conversations, and messages.
+One SQLite file holds documents, chunks, vectors, conversations, messages,
+permission grants, and write proposals.
 
-- **Documents** are notes (files in `notes/`), facts you teach directly, and —
-  from a later phase — conversation summaries. Each is keyed by a stable
+- **Documents** are files (from any indexed root), facts you teach directly,
+  and — from a later phase — conversation summaries. Each is keyed by a stable
   `source_id` and a content hash, so re-indexing unchanged files costs nothing.
 - **Chunks** are ~900 characters with overlap, split on paragraph boundaries.
 - **Vectors** are stored with the name of the embedder that produced them.
@@ -100,8 +158,10 @@ Billie is not antivirus and does not claim to be. What it does:
   configured, non-loopback requests are refused outright rather than allowed.
 - **Encryption at rest** for the database is scheduled, not done — see the
   roadmap. Today the SQLite file is protected only by your OS file permissions.
-- **Per-tool permission grants** arrive with the tools they govern, starting in
-  phase 2 (file access), so a grant always describes something real.
+- **Per-tool permission grants** arrive with the tools they govern, so a grant
+  always describes something real. Today: `file.read` and `file.write`.
+- **File writes** are confined to one folder, gated on a grant, and require an
+  approved diff. There is no API that writes a file directly.
 
 ## Why these choices
 
@@ -123,3 +183,13 @@ routing tests can prove the privacy guarantee without any network.
 **Streaming everywhere.** Both providers stream; the API is SSE. A local 8B
 model on a laptop takes a while to think, and watching it work beats watching a
 spinner.
+
+**Proposals in the database, not in memory.** A pending diff survives a
+restart, which matters once you can propose from a phone and approve at a
+desk (phase 6). It also means the audit trail and the proposal record agree
+about what was pending and when.
+
+**Polling for file changes, not OS events.** `watchdog` would be lower-latency
+and one more dependency with three platform backends. A snapshot of mtimes at a
+60-second interval is enough for notes you are editing yourself, and behaves
+identically everywhere.

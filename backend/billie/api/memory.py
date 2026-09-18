@@ -14,8 +14,8 @@ router = APIRouter(prefix="/api/memory", tags=["memory"], dependencies=[Depends(
 
 @router.post("/reindex")
 async def reindex(assistant: Assistant = Depends(get_assistant)) -> dict:
-    report = assistant.reindex_notes()
-    return {"notes_dir": str(assistant.settings.notes_dir), **report.to_dict()}
+    """Re-index every allow-listed folder."""
+    return assistant.reindex_files().to_dict()
 
 
 @router.post("/teach")

@@ -78,6 +78,29 @@ CREATE TABLE IF NOT EXISTS messages (
 );
 CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id);
 
+CREATE TABLE IF NOT EXISTS permissions (
+    tool       TEXT PRIMARY KEY,
+    granted    INTEGER NOT NULL,
+    note       TEXT NOT NULL DEFAULT '',
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS write_proposals (
+    id           TEXT PRIMARY KEY,
+    path         TEXT NOT NULL,
+    action       TEXT NOT NULL,          -- create | update | delete
+    new_content  TEXT,
+    diff         TEXT NOT NULL,
+    base_hash    TEXT NOT NULL,          -- '' when the file does not exist yet
+    note         TEXT NOT NULL DEFAULT '',
+    status       TEXT NOT NULL,          -- pending | approved | rejected | expired
+    resolution   TEXT NOT NULL DEFAULT '',
+    created_at   TEXT NOT NULL,
+    expires_at   TEXT NOT NULL,
+    resolved_at  TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_proposals_status ON write_proposals(status);
+
 CREATE TABLE IF NOT EXISTS meta (
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL
@@ -451,6 +474,85 @@ class MemoryStore:
             ).fetchall()
         return [dict(row) for row in rows]
 
+    # ------------------------------------------------------------------
+    # Permissions
+    # ------------------------------------------------------------------
+    def get_permission(self, tool: str) -> dict[str, Any] | None:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT tool, granted, note, updated_at FROM permissions WHERE tool = ?",
+                (tool,),
+            ).fetchone()
+        if row is None:
+            return None
+        return {**dict(row), "granted": bool(row["granted"])}
+
+    def set_permission(self, tool: str, granted: bool, note: str = "") -> None:
+        with self._lock:
+            self._conn.execute(
+                """INSERT INTO permissions (tool, granted, note, updated_at)
+                   VALUES (?, ?, ?, ?)
+                   ON CONFLICT(tool) DO UPDATE SET
+                       granted = excluded.granted,
+                       note = excluded.note,
+                       updated_at = excluded.updated_at""",
+                (tool, int(granted), note, _now()),
+            )
+            self._conn.commit()
+
+    def all_permissions(self) -> dict[str, dict[str, Any]]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT tool, granted, note, updated_at FROM permissions"
+            ).fetchall()
+        return {
+            row["tool"]: {**dict(row), "granted": bool(row["granted"])} for row in rows
+        }
+
+    # ------------------------------------------------------------------
+    # Write proposals
+    # ------------------------------------------------------------------
+    def create_proposal(self, proposal: dict[str, Any]) -> str:
+        with self._lock:
+            self._conn.execute(
+                """INSERT INTO write_proposals
+                   (id, path, action, new_content, diff, base_hash, note, status,
+                    resolution, created_at, expires_at, resolved_at)
+                   VALUES (:id, :path, :action, :new_content, :diff, :base_hash,
+                           :note, :status, '', :created_at, :expires_at, NULL)""",
+                proposal,
+            )
+            self._conn.commit()
+        return proposal["id"]
+
+    def get_proposal(self, proposal_id: str) -> dict[str, Any] | None:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM write_proposals WHERE id = ?", (proposal_id,)
+            ).fetchone()
+        return dict(row) if row else None
+
+    def list_proposals(self, status: str | None = None, limit: int = 100) -> list[dict[str, Any]]:
+        query = "SELECT * FROM write_proposals"
+        params: tuple[Any, ...] = ()
+        if status:
+            query += " WHERE status = ?"
+            params = (status,)
+        query += " ORDER BY created_at DESC LIMIT ?"
+        with self._lock:
+            rows = self._conn.execute(query, (*params, limit)).fetchall()
+        return [dict(row) for row in rows]
+
+    def resolve_proposal(self, proposal_id: str, status: str, resolution: str = "") -> None:
+        with self._lock:
+            self._conn.execute(
+                """UPDATE write_proposals
+                   SET status = ?, resolution = ?, resolved_at = ?
+                   WHERE id = ?""",
+                (status, resolution, _now(), proposal_id),
+            )
+            self._conn.commit()
+
     def stats(self) -> dict[str, Any]:
         with self._lock:
             def count(table: str) -> int:
@@ -461,6 +563,11 @@ class MemoryStore:
                 "chunks": count("chunks"),
                 "conversations": count("conversations"),
                 "messages": count("messages"),
+                "pending_proposals": int(
+                    self._conn.execute(
+                        "SELECT COUNT(*) FROM write_proposals WHERE status = 'pending'"
+                    ).fetchone()[0]
+                ),
                 "embedder": self.embedder.name,
                 "db_path": str(self.db_path),
             }

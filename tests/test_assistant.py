@@ -97,10 +97,11 @@ async def test_reindex_picks_up_the_notes_folder(assistant: Assistant):
     (assistant.settings.notes_dir / "kit.md").write_text(
         "# Kit\n\nThe microphone is a Shure SM7B.", encoding="utf-8"
     )
-    report = assistant.reindex_notes()
+    report = assistant.reindex_files()
     assert report.indexed == 1
     results = assistant.search("what microphone do I have")
-    assert results and results[0].source_id == "kit.md"
+    # Files are cited by root name, so an answer says which folder it came from.
+    assert results and results[0].source_id == "notes/kit.md"
 
 
 async def test_status_reports_both_providers_and_memory(assistant: Assistant):

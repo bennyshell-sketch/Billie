@@ -15,7 +15,8 @@ notes/**
 !notes/.gitkeep
 !notes/README.md
 !notes/example-*.md
-workspace/
+workspace/*
+!workspace/README.md
 audit/
 *.sqlite
 *.sqlite3

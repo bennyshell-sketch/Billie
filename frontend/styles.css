@@ -191,3 +191,28 @@ textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
 .roots li { padding: 4px 0; overflow-wrap: anywhere; }
 .roots code { font: 11px var(--mono); color: var(--muted); }
 .roots .missing { color: var(--warn); }
+
+/* --- Calendar (phase 3) --- */
+.connection {
+  display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: space-between;
+  padding: 10px 12px; border: 1px solid var(--line); border-radius: 12px; margin-bottom: 12px;
+}
+.connection .who { font-size: 13px; }
+.connection .who small { display: block; color: var(--muted); font-size: 11px; }
+.connection .buttons { display: flex; gap: 6px; }
+.connect {
+  background: var(--accent); color: #fff; border: 0; border-radius: 8px;
+  padding: 5px 12px; font-size: 12px; font-weight: 600; cursor: pointer;
+}
+.insecure {
+  margin: 0 0 12px; padding: 8px 12px; border-radius: 10px;
+  background: var(--warn-bg); color: var(--warn); font-size: 12px;
+}
+.preview {
+  margin: 0; padding: 10px 12px; font: 11.5px/1.5 var(--mono);
+  white-space: pre-wrap; overflow-wrap: anywhere; max-height: 260px; overflow-y: auto;
+}
+.events { margin: 0; padding: 0; list-style: none; font-size: 12.5px; }
+.events li { padding: 6px 0; border-top: 1px solid var(--line); }
+.events li:first-child { border-top: 0; }
+.events .when { display: block; color: var(--muted); font-size: 11px; }

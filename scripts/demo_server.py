@@ -24,6 +24,9 @@ import uvicorn  # noqa: E402
 
 from billie.app import build_assistant, create_app  # noqa: E402
 from billie.config import get_settings  # noqa: E402
+from billie.integrations.google_calendar import GoogleCalendar  # noqa: E402
+from billie.integrations.google_oauth import GoogleOAuth  # noqa: E402
+from billie.integrations.token_store import TokenStore  # noqa: E402
 from billie.models.base import (  # noqa: E402
     ChatMessage,
     Completion,
@@ -69,14 +72,55 @@ class ScriptedProvider(LLMProvider):
         )
 
 
+def fake_calendar(assistant) -> None:
+    """Wire the calendar to an in-memory Google, so the panel is demoable."""
+    sys.path.insert(0, str(ROOT))
+    from tests.fake_google import FakeGoogle
+
+    google = FakeGoogle()
+    google.add_event(
+        id="evt_standup",
+        summary="Team standup",
+        start={"dateTime": "2027-03-14T09:00:00+00:00"},
+        end={"dateTime": "2027-03-14T09:15:00+00:00"},
+        location="Zoom",
+    )
+    google.add_event(
+        id="evt_grant",
+        summary="Grant deadline",
+        start={"date": "2027-03-19"},
+        end={"date": "2027-03-20"},
+    )
+    store = TokenStore(fallback_path=ROOT / "data" / "demo-credentials.json", allow_file=True)
+    oauth = GoogleOAuth(
+        "demo-client-id", "demo-client-secret", store, client=google.client(), audit=assistant.audit
+    )
+    oauth.token_store.save(
+        oauth.account,
+        {
+            "refresh_token": "demo-refresh-token",
+            "access_token": "demo-access-token",
+            "expires_at": 4102444800.0,
+            "scopes": list(oauth.scopes),
+            "email": "you@example.com (demo)",
+            "connected_at": "2027-03-01T00:00:00Z",
+        },
+    )
+    assistant.calendar = GoogleCalendar(
+        oauth, assistant.confirmations, assistant.audit, client=google.client()
+    )
+
+
 def main() -> None:
     settings = get_settings()
     assistant = build_assistant(settings, owner="you")
     assistant.router.cloud = ScriptedProvider("anthropic (demo)", "cloud", "claude-opus-5")
     assistant.router.local = ScriptedProvider("ollama (demo)", "local", "llama3.1:8b")
+    fake_calendar(assistant)
     app = create_app(settings, assistant)
     port = settings.port + 1
-    print(f"\n  Billie DEMO (scripted model, no API calls)  http://127.0.0.1:{port}\n")
+    print(f"\n  Billie DEMO (scripted model and calendar, no API calls)")
+    print(f"  http://127.0.0.1:{port}\n")
     uvicorn.run(app, host="127.0.0.1", port=port, log_level="warning")
 
 

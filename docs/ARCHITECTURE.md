@@ -106,13 +106,52 @@ Every path is confined to the workspace after symlink resolution, so `../`,
 an absolute path, and a symlink pointing outside are all refused by the same
 check rather than by three separate special cases.
 
+## Anything external-facing
+
+`workspace.py` split proposing from writing for files. `confirmations.py` is
+the same shape for everything else: an action is proposed with a one-line
+summary and a human-readable preview, and an *executor* -- supplied by whoever
+owns the action -- runs only when you approve. The queue itself never learns
+what a calendar event or a flight booking is, which is why phase 7's travel
+booking will use it unchanged.
+
+The executor is the only path to the outside world. Approving twice is refused,
+a failing executor marks the action `failed` and keeps the error, and an
+unapproved action expires rather than sitting there indefinitely.
+
+## Google Calendar
+
+Three pieces, deliberately separate:
+
+- `integrations/token_store.py` decides *where a credential lives*. The OS
+  keychain, or nowhere: with no keychain available it raises rather than
+  silently writing a refresh token to disk, and the file fallback only exists
+  behind `BILLIE_ALLOW_FILE_TOKEN_STORE`. The UI shows which is in use.
+- `integrations/google_oauth.py` runs the authorisation-code flow with PKCE and
+  a loopback redirect. Google's device flow would be a smaller change to the UI
+  but does not cover Calendar scopes, and the loopback flow is what Google
+  recommends for an installed app. Billie already runs a local server, so its
+  own port is the redirect target. Access tokens are refreshed a couple of
+  minutes before expiry rather than after a failed call.
+- `integrations/google_calendar.py` talks to the Calendar REST API with httpx.
+  Reads return immediately; every write is a proposal on the confirmation
+  queue, and the preview spells out what will change -- including a line naming
+  anyone who will be emailed an invitation, because that is the part of
+  "create an event" that reaches other people.
+
+`integrations/calendar_sync.py` pulls events into memory as documents keyed
+`calendar/<calendar-id>/<event-id>`. That means "what have I got on Thursday?"
+is answered by the retrieval and citation machinery that already exists,
+instead of teaching the model a new tool. A sync that fails against Google
+does not sweep memory, so a transient outage cannot empty your diary.
+
 ## Memory
 
 One SQLite file holds documents, chunks, vectors, conversations, messages,
-permission grants, and write proposals.
+permission grants, write proposals, and pending actions.
 
-- **Documents** are files (from any indexed root), facts you teach directly,
-  and — from a later phase — conversation summaries. Each is keyed by a stable
+- **Documents** are files (from any indexed root), calendar events, facts you
+  teach directly, and — from a later phase — conversation summaries. Each is keyed by a stable
   `source_id` and a content hash, so re-indexing unchanged files costs nothing.
 - **Chunks** are ~900 characters with overlap, split on paragraph boundaries.
 - **Vectors** are stored with the name of the embedder that produced them.
@@ -159,9 +198,14 @@ Billie is not antivirus and does not claim to be. What it does:
 - **Encryption at rest** for the database is scheduled, not done — see the
   roadmap. Today the SQLite file is protected only by your OS file permissions.
 - **Per-tool permission grants** arrive with the tools they govern, so a grant
-  always describes something real. Today: `file.read` and `file.write`.
+  always describes something real. Today: `file.read`, `file.write`,
+  `calendar.read`, `calendar.write`.
 - **File writes** are confined to one folder, gated on a grant, and require an
   approved diff. There is no API that writes a file directly.
+- **OAuth tokens** live in the OS keychain, never in `.env` or the database.
+  The audit log records that a token was refreshed, never the token.
+- **Calendar changes** are gated on a grant *and* a per-action confirmation.
+  There is no API that changes your calendar directly.
 
 ## Why these choices
 
@@ -193,3 +237,16 @@ about what was pending and when.
 and one more dependency with three platform backends. A snapshot of mtimes at a
 60-second interval is enough for notes you are editing yourself, and behaves
 identically everywhere.
+
+**httpx against Google's REST API, not the Google client libraries.**
+`google-api-python-client` plus `google-auth-oauthlib` is a large dependency
+tree to reach five endpoints, and it hides the token handling that most needs
+to be visible in an app whose whole claim is that you can see what it did. The
+OAuth exchange and refresh are about thirty lines here, and
+`tests/fake_google.py` can stand the whole thing up in memory.
+
+**Calendar events as retrievable documents, not a model tool.** Wiring tool-use
+into the model loop is a bigger change than phase 3 needed, and it would make
+the model responsible for deciding when to touch your calendar. Syncing events
+into memory gets the useful half — asking about your schedule and getting a
+cited answer — while changes stay something you ask for and approve.

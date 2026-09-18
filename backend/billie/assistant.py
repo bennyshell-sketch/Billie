@@ -18,14 +18,31 @@ from billie import __version__
 from billie.audit import AuditLog
 from billie.config import Settings
 from billie.grounding import build_system_prompt, build_user_content, evaluate
+from billie.confirmations import ConfirmationQueue
+from billie.integrations.calendar_sync import (
+    CALENDAR_SOURCE_TYPE,
+    SyncReport,
+    sync_calendar,
+)
+from billie.integrations.google_calendar import GoogleCalendar
 from billie.memory.indexer import FILE_SOURCE_TYPE, IndexReport, index_roots
 from billie.memory.store import MemoryStore, RetrievedChunk
 from billie.models.base import ChatMessage, Completion, TextDelta
 from billie.models.router import ModelRouter, RoutingDecision
-from billie.permissions import FILE_READ, FILE_WRITE, Permissions
+from billie.permissions import (
+    CALENDAR_READ,
+    CALENDAR_WRITE,
+    FILE_READ,
+    FILE_WRITE,
+    Permissions,
+)
 from billie.workspace import Workspace
 
 MAX_HISTORY_MESSAGES = 20
+
+#: Everything that can end up in memory. Retrieval is filtered down to the
+#: subset the current permission grants allow.
+ALL_SOURCE_TYPES = ("fact", "conversation", FILE_SOURCE_TYPE, CALENDAR_SOURCE_TYPE)
 
 
 @dataclass
@@ -46,6 +63,8 @@ class Assistant:
         audit: AuditLog,
         permissions: Permissions | None = None,
         workspace: Workspace | None = None,
+        confirmations: ConfirmationQueue | None = None,
+        calendar: GoogleCalendar | None = None,
         owner: str = "the user",
     ) -> None:
         self.settings = settings
@@ -61,6 +80,11 @@ class Assistant:
             backup_dir=settings.backup_dir,
             ttl_minutes=settings.proposal_ttl_minutes,
         )
+        self.confirmations = confirmations or ConfirmationQueue(
+            store, audit, ttl_minutes=settings.proposal_ttl_minutes
+        )
+        #: None until a Google client is configured in .env.
+        self.calendar = calendar
 
     # ------------------------------------------------------------------
     # Memory
@@ -95,19 +119,43 @@ class Assistant:
 
         With file.read revoked, facts you taught Billie directly are still
         available -- they live in Billie's own database, not on your disk --
-        but nothing read from a file is returned.
+        but nothing read from a file is returned. The same goes for
+        calendar.read and synced events.
         """
-        source_types = None
+        blocked = set()
         if not self.permissions.is_granted(FILE_READ):
-            source_types = [
-                kind for kind in ("fact", "conversation") if kind != FILE_SOURCE_TYPE
-            ]
+            blocked.add(FILE_SOURCE_TYPE)
+        if not self.permissions.is_granted(CALENDAR_READ):
+            blocked.add(CALENDAR_SOURCE_TYPE)
+        source_types = (
+            None if not blocked else [k for k in ALL_SOURCE_TYPES if k not in blocked]
+        )
         return self.store.search(
             query,
             top_k=top_k or self.settings.retrieval_top_k,
             min_score=self.settings.retrieval_min_score,
             source_types=source_types,
         )
+
+    # ------------------------------------------------------------------
+    # Calendar
+    # ------------------------------------------------------------------
+    async def sync_calendar(self) -> SyncReport:
+        """Pull calendar events into memory. Needs the calendar.read grant."""
+        self.permissions.require(CALENDAR_READ)
+        if self.calendar is None:
+            raise RuntimeError(
+                "Google Calendar is not configured. Add GOOGLE_CLIENT_ID and "
+                "GOOGLE_CLIENT_SECRET to .env."
+            )
+        report = await sync_calendar(
+            self.calendar,
+            self.store,
+            days_past=self.settings.calendar_days_past,
+            days_ahead=self.settings.calendar_days_ahead,
+        )
+        self.audit.record("calendar.sync", **report.to_dict())
+        return report
 
     # ------------------------------------------------------------------
     # Chat
@@ -252,6 +300,7 @@ class Assistant:
                 "pending_proposals": len(self.workspace.pending()),
                 "watch_interval_seconds": self.settings.watch_interval_seconds,
             },
+            "calendar": self._calendar_status(),
             "routing": {
                 "default_route": self.settings.default_route,
                 "complexity_threshold": self.settings.complexity_threshold,
@@ -261,4 +310,24 @@ class Assistant:
                 "token_configured": bool(self.settings.api_token),
                 "loopback_unauthenticated": self.settings.allow_loopback_unauthenticated,
             },
+        }
+
+    def _calendar_status(self) -> dict[str, Any]:
+        if self.calendar is None:
+            return {
+                "configured": False,
+                "connected": False,
+                "detail": (
+                    "Add GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET to .env to "
+                    "connect a Google account."
+                ),
+                "pending_actions": len(self.confirmations.pending("calendar.")),
+                "writable": self.permissions.is_granted(CALENDAR_WRITE),
+            }
+        connection = self.calendar.oauth.connection()
+        return {
+            **connection,
+            "pending_actions": len(self.confirmations.pending("calendar.")),
+            "writable": self.permissions.is_granted(CALENDAR_WRITE),
+            "events_in_memory": len(self.store.list_documents(CALENDAR_SOURCE_TYPE)),
         }

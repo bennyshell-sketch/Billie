@@ -31,6 +31,9 @@
     permissions: $("permissions"),
     roots: $("roots"),
     chipPending: $("chip-pending"),
+    calendarConnection: $("calendar-connection"),
+    calendarActions: $("calendar-actions"),
+    calendarEvents: $("calendar-events"),
   };
 
   // A token is only needed when reaching Billie from another device (phase 6).
@@ -235,10 +238,12 @@
       paint(els.chipLocal, status.providers.local, "local");
       paint(els.chipCloud, status.providers.cloud, "cloud");
 
-      const pending = status.files?.pending_proposals || 0;
+      const pending =
+        (status.files?.pending_proposals || 0) + (status.calendar?.pending_actions || 0);
       els.chipPending.hidden = pending === 0;
       els.chipPending.textContent = `${pending} to approve`;
       loadPermissions(status);
+      renderConnection(status.calendar || { configured: false, connected: false });
     } catch (error) {
       els.chipLocal.textContent = "backend unreachable";
       els.chipLocal.className = "chip off";
@@ -425,10 +430,176 @@
     }
   }
 
+  /* --- Calendar ------------------------------------------------------- */
+
+  function button(label, className, onClick) {
+    const element = document.createElement("button");
+    element.className = className;
+    element.textContent = label;
+    element.addEventListener("click", onClick);
+    return element;
+  }
+
+  async function connectCalendar() {
+    try {
+      const { authorisation_url } = await api("/api/calendar/connect", { method: "POST" });
+      setHint("Approve access in the tab that just opened, then come back.");
+      window.open(authorisation_url, "_blank", "noopener");
+    } catch (error) {
+      setHint(error.message, true);
+    }
+  }
+
+  async function disconnectCalendar() {
+    if (!window.confirm("Disconnect the Google account and forget its token?")) return;
+    try {
+      await api("/api/calendar/disconnect", { method: "POST" });
+      setHint("Google account disconnected.");
+      refreshStatus();
+    } catch (error) {
+      setHint(error.message, true);
+    }
+  }
+
+  async function syncCalendar() {
+    setHint("Syncing the calendar…");
+    try {
+      const report = await api("/api/calendar/sync", { method: "POST" });
+      setHint(`Calendar synced: ${report.synced} new/changed, ${report.unchanged} unchanged.`);
+      loadCalendar();
+    } catch (error) {
+      setHint(error.message, true);
+    }
+  }
+
+  function renderConnection(calendar) {
+    els.calendarConnection.innerHTML = "";
+    const row = document.createElement("div");
+    row.className = "connection";
+
+    const who = document.createElement("div");
+    who.className = "who";
+    if (!calendar.configured) {
+      who.innerHTML = "<strong>Not configured</strong>";
+      who.appendChild(Object.assign(document.createElement("small"), {
+        textContent: "Add GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET to .env.",
+      }));
+    } else if (calendar.connected) {
+      who.innerHTML = `<strong>${calendar.email || "Connected"}</strong>`;
+      who.appendChild(Object.assign(document.createElement("small"), {
+        textContent: `${calendar.events_in_memory || 0} events in memory`,
+      }));
+    } else {
+      who.innerHTML = "<strong>No account connected</strong>";
+      who.appendChild(Object.assign(document.createElement("small"), {
+        textContent: "Sign in with Google to let Billie read your calendar.",
+      }));
+    }
+    row.appendChild(who);
+
+    const buttons = document.createElement("div");
+    buttons.className = "buttons";
+    if (calendar.configured && !calendar.connected) {
+      buttons.appendChild(button("Connect Google", "connect", connectCalendar));
+    } else if (calendar.connected) {
+      buttons.appendChild(button("Sync now", "ghost", syncCalendar));
+      buttons.appendChild(button("Disconnect", "reject", disconnectCalendar));
+    }
+    row.appendChild(buttons);
+    els.calendarConnection.appendChild(row);
+
+    const storage = calendar.storage;
+    if (calendar.connected && storage && storage.secure === false) {
+      const warning = document.createElement("p");
+      warning.className = "insecure";
+      warning.textContent = `Credentials are not in an OS keychain: ${storage.detail}`;
+      els.calendarConnection.appendChild(warning);
+    }
+  }
+
+  async function resolveAction(id, action, buttons) {
+    buttons.forEach((element) => (element.disabled = true));
+    try {
+      await api(`/api/calendar/actions/${id}/${action}`, { method: "POST" });
+      setHint(action === "approve" ? "Calendar updated." : "Change rejected.");
+      await Promise.all([loadCalendar(), refreshStatus()]);
+    } catch (error) {
+      setHint(error.message, true);
+      buttons.forEach((element) => (element.disabled = false));
+    }
+  }
+
+  async function loadCalendar() {
+    let actions = [];
+    try {
+      actions = (await api("/api/calendar/actions")).actions;
+    } catch {
+      actions = [];
+    }
+
+    els.calendarActions.innerHTML = "";
+    for (const action of actions) {
+      const card = document.createElement("div");
+      card.className = "proposal";
+      const head = document.createElement("div");
+      head.className = "proposal-head";
+      head.appendChild(Object.assign(document.createElement("div"), {
+        className: "proposal-path",
+        textContent: action.summary,
+      }));
+      const buttons = document.createElement("div");
+      buttons.className = "proposal-actions";
+      const approve = button("Approve", "approve", () => resolveAction(action.id, "approve", [approve, reject]));
+      const reject = button("Reject", "reject", () => resolveAction(action.id, "reject", [approve, reject]));
+      buttons.append(approve, reject);
+      head.appendChild(buttons);
+      card.appendChild(head);
+      card.appendChild(Object.assign(document.createElement("pre"), {
+        className: "preview",
+        textContent: action.preview,
+      }));
+      els.calendarActions.appendChild(card);
+    }
+
+    els.calendarEvents.innerHTML = "";
+    let events = [];
+    try {
+      events = (await api("/api/calendar/events?days_ahead=14")).events;
+    } catch (error) {
+      return;
+    }
+    const list = document.createElement("ul");
+    list.className = "events";
+    if (!events.length) {
+      els.calendarEvents.appendChild(Object.assign(document.createElement("p"), {
+        className: "panel-empty",
+        textContent: "Nothing in the next two weeks.",
+      }));
+      return;
+    }
+    for (const event of events.slice(0, 12)) {
+      const item = document.createElement("li");
+      item.appendChild(Object.assign(document.createElement("span"), { textContent: event.summary }));
+      const when = document.createElement("span");
+      when.className = "when";
+      when.textContent = event.all_day
+        ? `all day, ${event.start}`
+        : new Date(event.start).toLocaleString(undefined, {
+            weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit",
+          });
+      item.appendChild(when);
+      list.appendChild(item);
+    }
+    els.calendarEvents.appendChild(list);
+  }
+
   function togglePanel(open) {
     els.panel.hidden = !open;
     els.scrim.hidden = !open;
-    if (open) loadProposals();
+    if (open) {
+      loadProposals();
+      loadCalendar();
+    }
   }
 
   els.panelOpen.addEventListener("click", () => togglePanel(true));

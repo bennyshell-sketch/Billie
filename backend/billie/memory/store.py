@@ -101,6 +101,21 @@ CREATE TABLE IF NOT EXISTS write_proposals (
 );
 CREATE INDEX IF NOT EXISTS idx_proposals_status ON write_proposals(status);
 
+CREATE TABLE IF NOT EXISTS pending_actions (
+    id           TEXT PRIMARY KEY,
+    kind         TEXT NOT NULL,          -- calendar.create | calendar.move | ...
+    summary      TEXT NOT NULL,          -- one line: what will happen
+    preview      TEXT NOT NULL,          -- the full before/after, for display
+    payload      TEXT NOT NULL,          -- JSON the executor needs
+    status       TEXT NOT NULL,          -- pending | approved | rejected | expired | failed
+    resolution   TEXT NOT NULL DEFAULT '',
+    result       TEXT NOT NULL DEFAULT '{}',
+    created_at   TEXT NOT NULL,
+    expires_at   TEXT NOT NULL,
+    resolved_at  TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_actions_status ON pending_actions(status);
+
 CREATE TABLE IF NOT EXISTS meta (
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL
@@ -553,6 +568,61 @@ class MemoryStore:
             )
             self._conn.commit()
 
+    # ------------------------------------------------------------------
+    # Pending actions awaiting confirmation
+    # ------------------------------------------------------------------
+    def create_action(self, action: dict[str, Any]) -> str:
+        with self._lock:
+            self._conn.execute(
+                """INSERT INTO pending_actions
+                   (id, kind, summary, preview, payload, status, resolution, result,
+                    created_at, expires_at, resolved_at)
+                   VALUES (:id, :kind, :summary, :preview, :payload, :status, '', '{}',
+                           :created_at, :expires_at, NULL)""",
+                action,
+            )
+            self._conn.commit()
+        return action["id"]
+
+    def get_action(self, action_id: str) -> dict[str, Any] | None:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM pending_actions WHERE id = ?", (action_id,)
+            ).fetchone()
+        return dict(row) if row else None
+
+    def list_actions(
+        self, status: str | None = None, kind_prefix: str | None = None, limit: int = 100
+    ) -> list[dict[str, Any]]:
+        query = "SELECT * FROM pending_actions"
+        clauses: list[str] = []
+        params: list[Any] = []
+        if status:
+            clauses.append("status = ?")
+            params.append(status)
+        if kind_prefix:
+            clauses.append("kind LIKE ?")
+            params.append(f"{kind_prefix}%")
+        if clauses:
+            query += " WHERE " + " AND ".join(clauses)
+        query += " ORDER BY created_at DESC LIMIT ?"
+        params.append(limit)
+        with self._lock:
+            rows = self._conn.execute(query, params).fetchall()
+        return [dict(row) for row in rows]
+
+    def resolve_action(
+        self, action_id: str, status: str, resolution: str = "", result: dict | None = None
+    ) -> None:
+        with self._lock:
+            self._conn.execute(
+                """UPDATE pending_actions
+                   SET status = ?, resolution = ?, result = ?, resolved_at = ?
+                   WHERE id = ?""",
+                (status, resolution, json.dumps(result or {}), _now(), action_id),
+            )
+            self._conn.commit()
+
     def stats(self) -> dict[str, Any]:
         with self._lock:
             def count(table: str) -> int:
@@ -566,6 +636,11 @@ class MemoryStore:
                 "pending_proposals": int(
                     self._conn.execute(
                         "SELECT COUNT(*) FROM write_proposals WHERE status = 'pending'"
+                    ).fetchone()[0]
+                ),
+                "pending_actions": int(
+                    self._conn.execute(
+                        "SELECT COUNT(*) FROM pending_actions WHERE status = 'pending'"
                     ).fetchone()[0]
                 ),
                 "embedder": self.embedder.name,

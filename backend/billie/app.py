@@ -11,10 +11,15 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from billie import __version__
+from billie.api import calendar as calendar_api
 from billie.api import chat, files, memory, system
 from billie.assistant import Assistant
 from billie.audit import AuditLog
 from billie.config import PROJECT_ROOT, Settings, get_settings
+from billie.confirmations import ConfirmationQueue
+from billie.integrations.google_calendar import GoogleCalendar
+from billie.integrations.google_oauth import GoogleOAuth
+from billie.integrations.token_store import TokenStore
 from billie.memory.embeddings import get_embedder
 from billie.memory.store import MemoryStore
 from billie.models.anthropic_provider import AnthropicProvider
@@ -22,7 +27,7 @@ from billie.models.base import ProviderError, ProviderUnavailable
 from billie.models.ollama_provider import OllamaProvider
 from billie.models.router import ModelRouter
 from billie.permissions import PermissionDenied, Permissions
-from billie.watcher import FileWatcher
+from billie.watcher import CalendarSyncTask, FileWatcher
 from billie.workspace import Workspace
 
 FRONTEND_DIR = PROJECT_ROOT / "frontend"
@@ -54,6 +59,28 @@ def build_assistant(settings: Settings, owner: str = "the user") -> Assistant:
         audit=audit,
     )
     permissions = Permissions(store, audit)
+    confirmations = ConfirmationQueue(
+        store, audit, ttl_minutes=settings.proposal_ttl_minutes
+    )
+
+    calendar = None
+    if settings.google_configured:
+        token_store = TokenStore(
+            fallback_path=settings.token_fallback_path,
+            allow_file=settings.allow_file_token_store,
+        )
+        oauth = GoogleOAuth(
+            settings.google_client_id,
+            settings.google_client_secret,
+            token_store,
+            audit=audit,
+        )
+        calendar = GoogleCalendar(oauth, confirmations, audit)
+    else:
+        logger.info(
+            "Google Calendar is not configured (no GOOGLE_CLIENT_ID/SECRET in .env)"
+        )
+
     workspace = Workspace(
         settings.workspace_dir,
         store,
@@ -68,6 +95,8 @@ def build_assistant(settings: Settings, owner: str = "the user") -> Assistant:
         audit=audit,
         permissions=permissions,
         workspace=workspace,
+        confirmations=confirmations,
+        calendar=calendar,
         owner=owner,
     )
 
@@ -106,9 +135,16 @@ def create_app(
         watcher = FileWatcher(app.state.assistant, settings.watch_interval_seconds)
         app.state.watcher = watcher
         watcher.start()
+
+        calendar_sync = CalendarSyncTask(
+            app.state.assistant, settings.calendar_sync_interval_seconds
+        )
+        app.state.calendar_sync = calendar_sync
+        calendar_sync.start()
         try:
             yield
         finally:
+            await calendar_sync.stop()
             await watcher.stop()
             app.state.assistant.store.close()
 
@@ -126,6 +162,8 @@ def create_app(
     app.include_router(memory.router)
     app.include_router(files.permissions_router)
     app.include_router(files.workspace_router)
+    app.include_router(calendar_api.router)
+    app.include_router(calendar_api.callback_router)
 
     @app.exception_handler(ProviderUnavailable)
     async def _unavailable(_request, exc: ProviderUnavailable) -> JSONResponse:

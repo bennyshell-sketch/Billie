@@ -48,6 +48,21 @@ class Settings(BaseSettings):
         default=False, alias="BILLIE_USE_OLLAMA_EMBEDDINGS"
     )
 
+    # --- Google Calendar (phase 3) ---
+    google_client_id: str | None = Field(default=None, alias="GOOGLE_CLIENT_ID")
+    google_client_secret: str | None = Field(default=None, alias="GOOGLE_CLIENT_SECRET")
+    #: How far around today calendar events are pulled into memory.
+    calendar_days_past: int = Field(default=1, ge=0, alias="BILLIE_CALENDAR_DAYS_PAST")
+    calendar_days_ahead: int = Field(default=60, ge=1, alias="BILLIE_CALENDAR_DAYS_AHEAD")
+    #: Seconds between background calendar syncs. 0 turns it off.
+    calendar_sync_interval_seconds: float = Field(
+        default=900.0, ge=0, alias="BILLIE_CALENDAR_SYNC_INTERVAL_SECONDS"
+    )
+    #: Last-resort credential storage when no OS keychain exists. Off by default.
+    allow_file_token_store: bool = Field(
+        default=False, alias="BILLIE_ALLOW_FILE_TOKEN_STORE"
+    )
+
     # --- Routing ---
     default_route: Route = Field(default="auto", alias="BILLIE_DEFAULT_ROUTE")
     complexity_threshold: float = Field(
@@ -118,7 +133,13 @@ class Settings(BaseSettings):
             resolved.append(path.resolve())
         return resolved
 
-    @field_validator("anthropic_api_key", "api_token", mode="before")
+    @field_validator(
+        "anthropic_api_key",
+        "api_token",
+        "google_client_id",
+        "google_client_secret",
+        mode="before",
+    )
     @classmethod
     def _blank_to_none(cls, value: object) -> object:
         """Treat `KEY=` in .env as "not configured" rather than an empty key."""
@@ -147,6 +168,14 @@ class Settings(BaseSettings):
     @property
     def backup_dir(self) -> Path:
         return self.data_dir / "workspace-backups"
+
+    @property
+    def token_fallback_path(self) -> Path:
+        return self.data_dir / "credentials.json"
+
+    @property
+    def google_configured(self) -> bool:
+        return bool(self.google_client_id and self.google_client_secret)
 
     @property
     def max_indexed_file_bytes(self) -> int:

@@ -25,9 +25,14 @@ from billie.models.base import (
     StreamEvent,
     TextDelta,
 )
+from billie.confirmations import ConfirmationQueue
+from billie.integrations.google_calendar import GoogleCalendar
+from billie.integrations.google_oauth import GoogleOAuth
+from billie.integrations.token_store import TokenStore
 from billie.models.router import ModelRouter
 from billie.permissions import Permissions
 from billie.workspace import Workspace
+from tests.fake_google import FakeGoogle
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
@@ -150,6 +155,69 @@ def workspace(settings: Settings, store: MemoryStore, audit: AuditLog) -> Worksp
 
 
 @pytest.fixture
+def confirmations(store: MemoryStore, audit: AuditLog, settings: Settings) -> ConfirmationQueue:
+    return ConfirmationQueue(store, audit, ttl_minutes=settings.proposal_ttl_minutes)
+
+
+@pytest.fixture
+def google() -> FakeGoogle:
+    """An in-memory Google, with one event already in the diary."""
+    fake = FakeGoogle()
+    fake.add_event(
+        id="evt_standup",
+        summary="Team standup",
+        start={"dateTime": "2027-03-14T09:00:00+00:00"},
+        end={"dateTime": "2027-03-14T09:15:00+00:00"},
+        location="Zoom",
+    )
+    return fake
+
+
+@pytest.fixture
+def token_store(tmp_path) -> TokenStore:
+    """The file fallback, so tests do not touch a real keychain."""
+    return TokenStore(fallback_path=tmp_path / "credentials.json", allow_file=True)
+
+
+@pytest.fixture
+def oauth(token_store: TokenStore, google: FakeGoogle, audit: AuditLog) -> GoogleOAuth:
+    return GoogleOAuth(
+        "client-id.apps.googleusercontent.com",
+        "client-secret",
+        token_store,
+        client=google.client(),
+        audit=audit,
+    )
+
+
+@pytest.fixture
+def connected_oauth(oauth: GoogleOAuth, google: FakeGoogle) -> GoogleOAuth:
+    """An OAuth object that already holds a refresh token."""
+    oauth.token_store.save(
+        oauth.account,
+        {
+            "refresh_token": "refresh-token-abc",
+            "access_token": "access-token-1",
+            "expires_at": 4102444800.0,  # far future
+            "scopes": list(oauth.scopes),
+            "email": google.email,
+            "connected_at": "2027-03-01T00:00:00Z",
+        },
+    )
+    return oauth
+
+
+@pytest.fixture
+def calendar(
+    connected_oauth: GoogleOAuth,
+    confirmations: ConfirmationQueue,
+    audit: AuditLog,
+    google: FakeGoogle,
+) -> GoogleCalendar:
+    return GoogleCalendar(connected_oauth, confirmations, audit, client=google.client())
+
+
+@pytest.fixture
 def assistant(
     settings: Settings,
     store: MemoryStore,
@@ -157,6 +225,8 @@ def assistant(
     audit: AuditLog,
     permissions: Permissions,
     workspace: Workspace,
+    confirmations: ConfirmationQueue,
+    calendar: GoogleCalendar,
 ) -> Assistant:
     return Assistant(
         settings=settings,
@@ -165,6 +235,8 @@ def assistant(
         audit=audit,
         permissions=permissions,
         workspace=workspace,
+        confirmations=confirmations,
+        calendar=calendar,
         owner="Ben",
     )
 

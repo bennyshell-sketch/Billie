@@ -36,14 +36,33 @@ setup guide.
 `workspace.py`, `watcher.py`, `api/files.py`, the Files & permissions panel in
 the UI, and 74 further tests (167 total).
 
-## Phase 3 — Google Calendar *(next)*
+## ✅ Phase 3 — Google Calendar *(complete)*
 
-- OAuth device flow against your own Google account; the refresh token stored
-  in the OS keychain, not in `.env`.
-- Read, create, and move events. Anything that writes to the calendar shows you
-  exactly what it will do and waits for a yes.
+- OAuth against your own Google account, with the refresh token in the OS
+  keychain rather than `.env`. **Changed from the plan:** the authorisation-code
+  flow with PKCE and a loopback redirect, not the device flow — Google's device
+  flow does not cover Calendar scopes, and the loopback flow is what they
+  recommend for an installed app. Billie's own port is the redirect target.
+- With no keychain available, Billie refuses to store the token rather than
+  quietly writing it to disk; the file fallback is opt-in and flagged in the UI.
+- Read, create, move, and delete events. Every change is proposed with a preview
+  of exactly what will happen — including who will be emailed an invitation —
+  and waits for an explicit approval, gated on the `calendar.write` grant.
+- Events sync into memory as citable documents, so questions about your schedule
+  are answered by the existing retrieval and citation machinery.
+- A general confirmation queue (`confirmations.py`) that phase 7's travel
+  booking reuses.
 
-## Phase 4 — Voice
+**Delivered:** `confirmations.py`, `integrations/` (token store, OAuth,
+calendar, sync), `api/calendar.py`, the Calendar section of the UI panel, and
+86 further tests (253 total), including an in-memory Google
+(`tests/fake_google.py`).
+
+**Not done, deliberately:** the model cannot decide on its own to create or
+move an event. Tool-use in the model loop is a later step; for now a calendar
+change is something you ask for and approve.
+
+## Phase 4 — Voice *(next)*
 
 - **Speech to text:** `faster-whisper` running locally. Audio is transcribed
   on-device; no recording is uploaded to convert it to text.

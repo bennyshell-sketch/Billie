@@ -10,6 +10,7 @@ show Windows PowerShell first, with the macOS/Linux equivalent underneath.
 | **Python 3.11+** | everything | `python --version` |
 | **An Anthropic API key** | cloud reasoning | Optional — Billie runs local-only without one |
 | **Ollama** | the local model | Optional — Billie runs cloud-only without it |
+| **A Google OAuth client** | calendar | Optional — everything else works without it |
 
 Billie needs at least one of the two model backends. It will tell you clearly
 if neither is available rather than pretending to answer.
@@ -183,6 +184,69 @@ curl -X POST http://127.0.0.1:8765/api/workspace/propose `
 curl -X POST http://127.0.0.1:8765/api/workspace/proposals/<id>/approve
 ```
 
+## 5c. Connect your Google Calendar (optional)
+
+**In the Google Cloud console**, once:
+
+1. Create a project (or reuse one) and enable the **Google Calendar API**.
+2. Under *APIs & Services → Credentials*, create an **OAuth client ID** of type
+   **Desktop app**.
+3. Add `http://127.0.0.1:8765/api/calendar/oauth/callback` as an authorised
+   redirect URI. (Use your own `BILLIE_PORT` if you changed it.)
+4. Paste the client ID and secret into `.env`:
+
+```
+GOOGLE_CLIENT_ID=....apps.googleusercontent.com
+GOOGLE_CLIENT_SECRET=...
+```
+
+While your OAuth client is in *Testing* mode, add your own Google address as a
+test user, or Google will refuse the sign-in.
+
+**In Billie**, open **Files & permissions → Calendar → Connect Google**. That
+opens Google's consent screen in a browser tab; approve it and the tab comes
+back to Billie saying it is connected.
+
+Billie asks for two scopes, not full calendar access: `calendar.readonly` (read
+events and see which calendars you have) and `calendar.events` (create, move
+and delete events). It cannot create or delete whole calendars.
+
+**Where the token lives.** Google returns a refresh token — a long-lived
+credential — and it goes into your operating system's credential store:
+Credential Locker on Windows, Keychain on macOS, Secret Service on Linux. Not
+`.env`, not the database, never the audit log.
+
+If no keychain backend exists (usually a headless Linux box), Billie **refuses
+to store it** rather than quietly writing it to disk, and tells you what to
+install. If you would rather accept a permission-protected file, set
+`BILLIE_ALLOW_FILE_TOKEN_STORE=true` — Billie then says so in the Calendar
+panel for as long as that is in force.
+
+**What Billie does with it.** Events within
+`BILLIE_CALENDAR_DAYS_PAST`/`DAYS_AHEAD` are pulled into memory every
+`BILLIE_CALENDAR_SYNC_INTERVAL_SECONDS` (15 minutes by default), so a question
+like *"when is the team standup and where?"* is answered with a citation to
+`calendar/primary/<event id>` — the same retrieval and citation machinery your
+notes use.
+
+**Changing the calendar** works exactly like a workspace write: a change is
+proposed, you see precisely what will happen — including a warning when
+invitations will be emailed to other people — and nothing reaches Google until
+you approve it. `calendar.write` must be granted as well.
+
+```powershell
+# Propose -- nothing is sent to Google
+curl -X POST http://127.0.0.1:8765/api/calendar/events/propose `
+  -H "Content-Type: application/json" `
+  -d '{"summary": "Dentist", "start": "2027-04-01T09:00:00Z", "end": "2027-04-01T09:30:00Z"}'
+
+# Approve, using the id from that response
+curl -X POST http://127.0.0.1:8765/api/calendar/actions/<id>/approve
+```
+
+Disconnecting revokes the token with Google, forgets it locally, and drops the
+synced events out of memory.
+
 ## 6. Run it
 
 ```powershell
@@ -204,8 +268,10 @@ python scripts/demo_server.py      # http://127.0.0.1:8766, scripted replies
 python -m pytest
 ```
 
-167 tests, no network access, a temporary database and workspace per test. Run
-them before each phase moves forward.
+253 tests, no network access, a temporary database and workspace per test.
+Google is stood up in memory (`tests/fake_google.py`), so the whole OAuth and
+calendar flow is exercised without an account. Run them before each phase moves
+forward.
 
 ## Using it
 
@@ -263,6 +329,22 @@ refused on purpose.
 
 **An approval returns 409.** The file changed after the diff was generated.
 Nothing was written; propose the change again against the current content.
+
+**"Cannot store credentials securely."** No OS keychain was found. On Windows
+and macOS this should not happen. On Linux, install a Secret Service provider
+(`pip install secretstorage` with GNOME Keyring or KWallet running), or set
+`BILLIE_ALLOW_FILE_TOKEN_STORE=true` to accept a file instead.
+
+**"Google did not return a refresh token."** Google only issues one the first
+time you approve. Remove Billie at
+<https://myaccount.google.com/permissions> and connect again.
+
+**Google sign-in says the app is blocked or unverified.** While your OAuth
+client is in *Testing*, only accounts added as test users can sign in. Add your
+own address under *OAuth consent screen → Test users*.
+
+**The sign-in tab returns "did not match this session".** The `state` check
+failed — usually an old tab. Start again from the Connect button.
 
 **Retrieval misses obvious matches.** The offline embedder is lexical. Switch
 to `nomic-embed-text` (step 4), or lower `BILLIE_RETRIEVAL_MIN_SCORE`.

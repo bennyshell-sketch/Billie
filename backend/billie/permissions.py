@@ -12,8 +12,12 @@ Defaults are deliberate rather than uniform:
 * `file.write` is denied by default. Billie cannot write anything until you
   grant it -- and even then, only through a diff you have approved.
 
-Later phases register their own tools here (calendar, browsing, purchases), so
-a grant in the UI always corresponds to something that actually exists.
+* `calendar.read` is granted by default for the same reason: connecting a
+  Google account is the consent. `calendar.write` is denied by default, and
+  even once granted every change still waits for a per-action confirmation.
+
+Later phases register their own tools here (browsing, purchases), so a grant in
+the UI always corresponds to something that actually exists.
 """
 
 from __future__ import annotations
@@ -26,6 +30,8 @@ from billie.memory.store import MemoryStore
 
 FILE_READ = "file.read"
 FILE_WRITE = "file.write"
+CALENDAR_READ = "calendar.read"
+CALENDAR_WRITE = "calendar.write"
 
 
 @dataclass(frozen=True)
@@ -54,6 +60,25 @@ REGISTRY: dict[str, ToolPermission] = {
             "Apply a change to a file in the workspace folder, after you have "
             "seen and approved the exact diff. Billie can never write anywhere "
             "else, and never without your approval."
+        ),
+        default_granted=False,
+    ),
+    CALENDAR_READ: ToolPermission(
+        name=CALENDAR_READ,
+        title="Read your calendar",
+        description=(
+            "Fetch events from the Google account you connected, so Billie can "
+            "answer questions about your schedule and cite the event it read. "
+            "Revoking this stops syncing and removes events from answers."
+        ),
+        default_granted=True,
+    ),
+    CALENDAR_WRITE: ToolPermission(
+        name=CALENDAR_WRITE,
+        title="Change your calendar",
+        description=(
+            "Create, move, or delete events in your Google Calendar -- each one "
+            "only after you have seen exactly what will change and approved it."
         ),
         default_granted=False,
     ),

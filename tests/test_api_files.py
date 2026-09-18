@@ -170,6 +170,6 @@ def test_writes_show_up_in_the_audit_log(client: TestClient):
 
 def test_status_reports_permissions_and_indexed_roots(client: TestClient):
     status = client.get("/api/status").json()
-    assert {entry["tool"] for entry in status["permissions"]} == {FILE_READ, FILE_WRITE}
+    assert {FILE_READ, FILE_WRITE} <= {entry["tool"] for entry in status["permissions"]}
     assert status["files"]["workspace_writable"] is False
     assert any(root["name"] == "notes" for root in status["files"]["roots"])

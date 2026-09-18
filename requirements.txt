@@ -13,6 +13,9 @@ anthropic>=1.0
 pypdf>=4.0
 python-docx>=1.1
 
+# Phase 3: OAuth refresh tokens in the OS credential store.
+keyring>=25.0
+
 # Tests
 pytest>=8.0
 pytest-asyncio>=0.23

@@ -4,10 +4,11 @@ A local-first personal AI assistant. Single user, runs on your own machine,
 keeps its memory in a local database, and tells you which model answered every
 question.
 
-**Status: Phases 1–2 complete.** Chat with routing between a local model and
-the Claude API, memory over your allow-listed folders with citations, a
-confidence flag on every answer, revocable per-tool permissions, an approve-
-the-diff workspace, and audit logging. The remaining phases are listed in
+**Status: Phases 1–3 complete.** Chat with routing between a local model and
+the Claude API, memory over your allow-listed folders and your calendar with
+citations, a confidence flag on every answer, revocable per-tool permissions,
+an approve-the-diff workspace, Google Calendar with per-change confirmation,
+and audit logging. The remaining phases are listed in
 [docs/ROADMAP.md](docs/ROADMAP.md).
 
 ---
@@ -24,11 +25,13 @@ the-diff workspace, and audit logging. The remaining phases are listed in
 | **Confidence flag** | Every answer is labelled `grounded`, `unverified`, or `Billie flagged uncertainty` — an honest signal about whether the answer rested on a source |
 | **File indexing** | An explicit allow-list of folders — Markdown, text, code, PDF, and Word documents. Never the whole drive; a filesystem root or bare home folder is refused with a reason |
 | **Approve-the-diff writes** | Billie can write to one `workspace/` folder, and only by proposing a unified diff you approve. Stale diffs are refused rather than clobbering your edit, and the old version is backed up |
-| **Permission grants** | `file.read` and `file.write` can each be revoked on their own, in the UI. Revoked means the code path fails closed, not degrades |
-| **Watcher** | Changed files are re-indexed in the background without a manual trigger |
+| **Permission grants** | `file.read`, `file.write`, `calendar.read`, and `calendar.write` can each be revoked on their own, in the UI. Revoked means the code path fails closed, not degrades |
+| **Google Calendar** | OAuth against your own account, with the refresh token in your OS keychain. Events sync into memory, so "what's on Thursday?" is answered with a citation to the event it read |
+| **Confirmed calendar changes** | Creating, moving, and deleting an event each show exactly what will happen — including who gets emailed an invitation — and wait for your yes |
+| **Watcher** | Changed files are re-indexed, and the calendar re-synced, in the background |
 | **Audit log** | Every request, model call, routing decision, memory write, permission change, and file write goes to `data/audit.log.jsonl`, with credentials redacted |
 | **Auth** | Bearer-token auth on the API, with a loopback exemption for local use. Required before phase 6 exposes it to your phones |
-| **Tests** | 167 tests covering config, secrets hygiene, retrieval, indexing, routing, grounding, permissions, workspace writes, both provider wire protocols, and the HTTP API |
+| **Tests** | 253 tests covering config, secrets hygiene, retrieval, indexing, routing, grounding, permissions, workspace writes, the OAuth flow, calendar reads and writes, both provider wire protocols, and the HTTP API — none of them touching the network |
 
 ## Quick start
 
@@ -58,18 +61,20 @@ Billie/
 │   ├── grounding.py      system prompt, citations, confidence flag
 │   ├── permissions.py    per-tool grants you can revoke individually
 │   ├── workspace.py      propose a diff -> you approve -> only then a write
-│   ├── watcher.py        background re-indexing of changed files
+│   ├── confirmations.py  the same idea for anything external-facing
+│   ├── integrations/     Google OAuth, Calendar, and the token store
+│   ├── watcher.py        background re-indexing and calendar sync
 │   ├── audit.py          append-only audit log with redaction
 │   ├── auth.py           bearer-token auth, loopback exemption
 │   ├── models/           anthropic_provider, ollama_provider, router
 │   ├── memory/           embeddings, SQLite store, extractors, file indexer
-│   └── api/              chat, memory, files, and system routes
+│   └── api/              chat, memory, files, calendar, and system routes
 ├── frontend/             the chat UI (served at /)
 ├── notes/                your notes -- Billie's memory (git-ignored)
 ├── workspace/            the only folder Billie may write to (git-ignored)
 ├── data/                 database + audit log + backups (git-ignored)
 ├── scripts/demo_server.py
-├── tests/                167 tests
+├── tests/                253 tests
 └── docs/                 SETUP, ARCHITECTURE, ROADMAP
 ```
 
@@ -81,8 +86,9 @@ Billie/
    nowhere. There is no code path from a private request to the cloud.
 3. **No silent guessing.** Billie cites its source or says it doesn't have one,
    and the UI shows which of those happened.
-4. **No silent file edits.** Billie writes only inside `workspace/`, only
-   through a diff you approved, and only while `file.write` is granted.
+4. **No silent file edits, no silent calendar changes.** Billie writes only
+   inside `workspace/`, only through a diff you approved. Every calendar
+   change shows you exactly what it will do and waits for your yes.
 5. **Only the folders you name.** There is no "index everything" mode.
 6. **No telemetry.** Billie talks to the APIs you configure and nothing else.
 7. **You can see what it did.** Every external call and file write is in the
@@ -98,7 +104,12 @@ Billie/
 - Billie learns by storing and retrieving what you teach it, not by retraining
   a model. That is the practical option for one person's data.
 - The local database is not yet encrypted at rest — that is scheduled work, see
-  the roadmap.
+  the roadmap. Your Google refresh token is the exception: it goes in the OS
+  keychain, and Billie refuses to store it at all rather than quietly writing
+  it to a file if no keychain exists.
+- Billie does not decide on its own to change your calendar. Creating or moving
+  an event is something you ask for, and then approve; the model is not yet
+  wired to call these tools itself.
 - PDF text extraction works on digital PDFs. A scanned document has no text
   layer, and Billie says so rather than indexing an empty file; OCR is not
   included.

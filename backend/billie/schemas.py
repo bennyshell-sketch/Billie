@@ -64,6 +64,27 @@ class RejectRequest(BaseModel):
     reason: str = ""
 
 
+class CreateEventRequest(BaseModel):
+    summary: str = Field(min_length=1)
+    #: ISO 8601. A date (2027-03-14) for an all-day event, otherwise a datetime.
+    start: str = Field(min_length=4)
+    end: str = Field(min_length=4)
+    calendar_id: str = "primary"
+    all_day: bool = False
+    location: str = ""
+    description: str = ""
+    attendees: list[str] = []
+    timezone: str | None = None
+
+
+class MoveEventRequest(BaseModel):
+    start: str = Field(min_length=4)
+    end: str = Field(min_length=4)
+    calendar_id: str = "primary"
+    all_day: bool | None = None
+    timezone: str | None = None
+
+
 class StatusResponse(BaseModel):
     version: str
     providers: dict[str, Any]

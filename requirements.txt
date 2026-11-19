@@ -1,0 +1,27 @@
+# Phase 1 runtime
+fastapi>=0.115
+uvicorn[standard]>=0.30
+httpx>=0.27
+pydantic>=2.7
+pydantic-settings>=2.3
+python-dotenv>=1.0
+numpy>=1.26
+anthropic>=1.0
+
+# Phase 2: reading PDF and Word documents. Both are optional -- without them
+# Billie indexes everything else and reports those files as skipped.
+pypdf>=4.0
+python-docx>=1.1
+
+# Phase 3: OAuth refresh tokens in the OS credential store.
+keyring>=25.0
+
+# Phase 4: speech to text, on this machine. Optional -- without it everything
+# else still works and the voice button says what to install.
+faster-whisper>=1.0
+# Multipart uploads for the recording and voice samples.
+python-multipart>=0.0.9
+
+# Tests
+pytest>=8.0
+pytest-asyncio>=0.23

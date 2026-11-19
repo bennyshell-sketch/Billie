@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="theme-color" content="#111318" />
+<title>Billie</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 32 32%27%3E%3Crect width=%2732%27 height=%2732%27 rx=%278%27 fill=%27%236b4df6%27/%3E%3Ctext x=%2716%27 y=%2722%27 font-family=%27sans-serif%27 font-size=%2718%27 font-weight=%27700%27 fill=%27white%27 text-anchor=%27middle%27%3EB%3C/text%3E%3C/svg%3E" />
+<link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+<div class="app">
+  <header class="topbar">
+    <div class="brand">
+      <span class="mark" aria-hidden="true">B</span>
+      <div>
+        <h1>Billie</h1>
+        <p class="tagline">local-first assistant</p>
+      </div>
+    </div>
+    <div class="status" id="status">
+      <button class="chip pending" id="chip-pending" hidden title="Changes waiting for your approval"></button>
+      <span class="chip" id="chip-local" title="Local model">local —</span>
+      <span class="chip" id="chip-cloud" title="Claude API">cloud —</span>
+      <button class="ghost" id="btn-panel" title="Files, permissions and pending changes">Files</button>
+      <button class="ghost" id="btn-refresh" title="Refresh status">↻</button>
+    </div>
+  </header>
+
+  <main class="messages" id="messages">
+    <div class="empty" id="empty">
+      <h2>Ask Billie something.</h2>
+      <p>
+        Answers are grounded in the notes in your <code>notes/</code> folder and cited by
+        filename. Every reply shows which model produced it — your local model or the
+        Claude API — and whether it was grounded in a source.
+      </p>
+    </div>
+  </main>
+
+  <footer class="composer">
+    <div class="controls">
+      <label class="control">
+        <span>Route</span>
+        <select id="route">
+          <option value="auto">Auto</option>
+          <option value="local">Local only</option>
+          <option value="cloud">Claude only</option>
+        </select>
+      </label>
+      <label class="toggle" title="Never leaves this machine: local model only, no cloud fallback.">
+        <input type="checkbox" id="private" />
+        <span>Private</span>
+      </label>
+      <label class="toggle" title="Retrieve from your notes before answering.">
+        <input type="checkbox" id="memory" checked />
+        <span>Use memory</span>
+      </label>
+      <label class="toggle" id="speak-toggle" title="Read replies aloud with ElevenLabs. Sends the reply text to their API.">
+        <input type="checkbox" id="speak" />
+        <span>Speak replies</span>
+      </label>
+      <button class="ghost" id="btn-reindex" title="Re-index your allow-listed folders">Re-index files</button>
+      <button class="ghost" id="btn-new" title="Start a new conversation">New chat</button>
+    </div>
+    <form class="input-row" id="form">
+      <textarea id="input" rows="1" placeholder="Message Billie…  (Enter to send, Shift+Enter for a new line)" autocomplete="off"></textarea>
+      <button type="button" id="talk" class="talk" title="Hold to talk, or click to start and stop. Transcribed on this machine." aria-label="Push to talk">
+        <span aria-hidden="true">🎙</span>
+      </button>
+      <button type="submit" id="send">Send</button>
+    </form>
+    <p class="hint" id="hint"></p>
+  </footer>
+</div>
+<aside class="panel" id="panel" hidden aria-label="Files and permissions">
+  <div class="panel-head">
+    <h2>Files &amp; permissions</h2>
+    <button class="ghost" id="panel-close" aria-label="Close">✕</button>
+  </div>
+
+  <section class="panel-section">
+    <h3>Pending changes</h3>
+    <p class="panel-note">Billie never writes a file until you approve the diff.</p>
+    <div id="proposals"><p class="panel-empty">Nothing waiting.</p></div>
+  </section>
+
+  <section class="panel-section">
+    <h3>Calendar</h3>
+    <p class="panel-note">
+      Billie reads your Google Calendar. Every change waits for your approval first.
+    </p>
+    <div id="calendar-connection"></div>
+    <div id="calendar-actions"></div>
+    <div id="calendar-events"></div>
+  </section>
+
+  <section class="panel-section">
+    <h3>Voice</h3>
+    <p class="panel-note">
+      Speech to text runs on this machine. Speaking replies sends the text to
+      ElevenLabs under your key.
+    </p>
+    <div id="voice-status"></div>
+    <div id="voice-actions"></div>
+    <details id="clone-box">
+      <summary>Clone your voice</summary>
+      <p class="panel-note">
+        Only your own recordings, from your voice-samples folder, under your own
+        ElevenLabs account.
+      </p>
+      <div id="clone-samples"></div>
+      <label class="field"><span>Voice name</span>
+        <input type="text" id="clone-name" placeholder="e.g. Ben" />
+      </label>
+      <label class="toggle attest">
+        <input type="checkbox" id="clone-attest" />
+        <span>These recordings are of my own voice.</span>
+      </label>
+      <button class="connect" id="clone-submit">Prepare clone</button>
+    </details>
+  </section>
+
+  <section class="panel-section">
+    <h3>Permissions</h3>
+    <p class="panel-note">Each one can be revoked on its own, at any time.</p>
+    <div id="permissions"></div>
+  </section>
+
+  <section class="panel-section">
+    <h3>Indexed folders</h3>
+    <p class="panel-note">
+      Only these folders are read. Add more with <code>BILLIE_INDEXED_FOLDERS</code> in
+      <code>.env</code>.
+    </p>
+    <ul class="roots" id="roots"></ul>
+  </section>
+</aside>
+<div class="scrim" id="scrim" hidden></div>
+<script src="/static/app.js"></script>
+</body>
+</html>

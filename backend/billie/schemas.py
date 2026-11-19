@@ -1,0 +1,108 @@
+"""Request and response models for the HTTP API."""
+
+from __future__ import annotations
+
+from typing import Any, Literal
+
+from pydantic import BaseModel, Field
+
+
+class ChatRequest(BaseModel):
+    message: str = Field(min_length=1)
+    conversation_id: str | None = None
+    #: "auto" lets the router decide; "local"/"cloud" force a provider.
+    route: Literal["auto", "local", "cloud"] | None = None
+    #: Never leaves this machine. Local model only, no cloud fallback.
+    private: bool = False
+    use_memory: bool = True
+    max_tokens: int | None = Field(default=None, ge=1, le=128_000)
+
+
+class ChatResponse(BaseModel):
+    conversation_id: str
+    message_id: str
+    answer: str
+    routing: dict[str, Any]
+    grounding: dict[str, Any]
+    sources: list[dict[str, Any]]
+    usage: dict[str, Any] = {}
+    latency_ms: int | None = None
+
+
+class TeachRequest(BaseModel):
+    """Something you are telling Billie to remember."""
+
+    content: str = Field(min_length=1)
+    title: str | None = None
+    tags: list[str] = []
+
+
+class SearchRequest(BaseModel):
+    query: str = Field(min_length=1)
+    top_k: int = Field(default=5, ge=1, le=50)
+
+
+class PermissionUpdate(BaseModel):
+    granted: bool
+    note: str = ""
+
+
+class ProposeWriteRequest(BaseModel):
+    """Ask for a change. Returns a diff; writes nothing."""
+
+    path: str = Field(min_length=1, description="Path relative to the workspace folder")
+    content: str
+    note: str = ""
+
+
+class ProposeDeleteRequest(BaseModel):
+    path: str = Field(min_length=1)
+    note: str = ""
+
+
+class RejectRequest(BaseModel):
+    reason: str = ""
+
+
+class CreateEventRequest(BaseModel):
+    summary: str = Field(min_length=1)
+    #: ISO 8601. A date (2027-03-14) for an all-day event, otherwise a datetime.
+    start: str = Field(min_length=4)
+    end: str = Field(min_length=4)
+    calendar_id: str = "primary"
+    all_day: bool = False
+    location: str = ""
+    description: str = ""
+    attendees: list[str] = []
+    timezone: str | None = None
+
+
+class MoveEventRequest(BaseModel):
+    start: str = Field(min_length=4)
+    end: str = Field(min_length=4)
+    calendar_id: str = "primary"
+    all_day: bool | None = None
+    timezone: str | None = None
+
+
+class SpeakRequest(BaseModel):
+    text: str = Field(min_length=1)
+    voice_id: str | None = None
+
+
+class CloneVoiceRequest(BaseModel):
+    name: str = Field(min_length=1)
+    #: Filenames inside the voice-samples folder. Nothing else is uploaded.
+    samples: list[str] = Field(min_length=1)
+    #: Billie clones your own voice only; this is your attestation that these
+    #: recordings are of you. Software cannot verify it, so it is asked plainly.
+    i_am_the_speaker: bool = False
+    description: str = ""
+
+
+class StatusResponse(BaseModel):
+    version: str
+    providers: dict[str, Any]
+    memory: dict[str, Any]
+    routing: dict[str, Any]
+    auth: dict[str, Any]

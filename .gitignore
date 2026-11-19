@@ -1,0 +1,49 @@
+# --- Secrets: never commit these ---
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+credentials.json
+token.json
+client_secret*.json
+
+# --- Local data (personal, never leaves the machine) ---
+data/*
+!data/.gitkeep
+notes/**
+!notes/.gitkeep
+!notes/README.md
+!notes/example-*.md
+workspace/*
+!workspace/README.md
+voice-samples/*
+!voice-samples/README.md
+audit/
+*.sqlite
+*.sqlite3
+*.db
+
+# --- Python ---
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# --- Node / desktop shell (later phases) ---
+node_modules/
+dist/
+build/
+target/
+
+# --- OS / editor ---
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
